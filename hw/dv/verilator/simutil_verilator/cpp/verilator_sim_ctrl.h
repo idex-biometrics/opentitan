@@ -121,6 +121,23 @@ class VerilatorSimCtrl {
    */
   unsigned long GetTime() const { return time_; }
 
+  /**
+   * Enable tracing (if possible)
+   *
+   * Enabling tracing can fail if no tracing support has been compiled into the
+   * simulation.
+   *
+   * @return Is tracing enabled?
+   */
+  bool TraceOn();
+
+  /**
+   * Disable tracing
+   *
+   * @return Is tracing enabled?
+   */
+  bool TraceOff();
+
  private:
   VerilatedToplevel *top_;
   CData *sig_clk_;
@@ -164,23 +181,6 @@ class VerilatorSimCtrl {
    * Print help how to use this tool
    */
   void PrintHelp() const;
-
-  /**
-   * Enable tracing (if possible)
-   *
-   * Enabling tracing can fail if no tracing support has been compiled into the
-   * simulation.
-   *
-   * @return Is tracing enabled?
-   */
-  bool TraceOn();
-
-  /**
-   * Disable tracing
-   *
-   * @return Is tracing enabled?
-   */
-  bool TraceOff();
 
   /**
    * Is tracing currently enabled?
