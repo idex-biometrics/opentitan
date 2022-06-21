@@ -20,7 +20,7 @@ load(
 package(default_visibility = [
     # Public for visibility by "@raze__crate__version//" targets.
     #
-    # Prefer access through "//third_party/cargo", which limits external
+    # Prefer access through "//third_party/rust/crates", which limits external
     # visibility to explicit Cargo.toml dependencies.
     "//visibility:public",
 ])
@@ -77,7 +77,7 @@ rust_library(
     # buildifier: leave-alone
     deps = [
         "@raze__flate2__1_0_23//:flate2",
-        "@raze__memchr__2_4_1//:memchr",
+        "@raze__memchr__2_5_0//:memchr",
     ],
 )
 

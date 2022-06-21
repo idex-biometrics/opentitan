@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-load("//rules:opentitan.bzl", "opentitan_flash_binary", "opentitan_rom_binary")
+load("@//rules:opentitan.bzl", "opentitan_flash_binary", "opentitan_rom_binary")
 load("@bazel_skylib//lib:shell.bzl", "shell")
 
 _EXIT_SUCCESS = r"PASS.*\n"
@@ -12,11 +12,10 @@ _BASE_PARAMS = {
     "args": [],
     "data": [],
     "local": True,
-    # TODO: the name of this target should be HW target generic
-    "otp": "//hw/ip/otp_ctrl/data:rma_image_verilator",
-    "rom": "//sw/device/lib/testing/test_rom:test_rom_{}_scr_vmem",
+    "otp": "@//hw/ip/otp_ctrl/data:img_rma",
+    "rom": "@//sw/device/lib/testing/test_rom:test_rom_{}_scr_vmem",
     "tags": [],
-    "test_runner": "//util:opentitantool_test_runner.sh",
+    "test_runner": "@//util:opentitantool_test_runner.sh",
     "timeout": "moderate",  # 5 minutes
 }
 
@@ -31,9 +30,10 @@ def dv_params(
         rom = _BASE_PARAMS["rom"].format("sim_dv"),
         tags = _BASE_PARAMS["tags"],
         timeout = _BASE_PARAMS["timeout"],
+        test_runner = "@//util:dvsim_test_runner.sh",
         # DV-specific Parameters
         bootstrap_sw = False,  # Default to backdoor loading.
-        dvsim_config = "//hw/top_earlgrey/dv:chip_sim_cfg.hjson",
+        dvsim_config = "@//hw/top_earlgrey/dv:chip_sim_cfg.hjson",
         **kwargs):
     """A macro to create DV sim parameters for OpenTitan functional tests.
 
@@ -54,21 +54,23 @@ def dv_params(
     required_args = [
         "-i",
         "chip_sw_{name}",
+        "--",
     ]
     required_data = [
         dvsim_config,
-        "//util/dvsim",
-        "//hw:all_files",
+        "@//util/dvsim",
+        "@//hw:all_files",
+        "@//hw:fusesoc_ignore",
     ]
     required_tags = ["dv"]
     kwargs.update(
-        args = required_args + args,
+        args = args + required_args,
         data = required_data + data,
         local = local,
         otp = otp,
         rom = rom,
         tags = required_tags + tags,
-        test_runner = "//util:dvsim_test_runner.sh",
+        test_runner = test_runner,
         timeout = timeout,
         bootstrap_sw = bootstrap_sw,
         dvsim_config = dvsim_config,
@@ -89,6 +91,7 @@ def verilator_params(
         rom = _BASE_PARAMS["rom"].format("sim_verilator"),
         tags = _BASE_PARAMS["tags"] + ["cpu:4"],
         timeout = _BASE_PARAMS["timeout"],
+        test_runner = _BASE_PARAMS["test_runner"],
         # Verilator-specific Parameters
         # None
         **kwargs):
@@ -111,14 +114,15 @@ def verilator_params(
         "--logging=info",
         "--interface=verilator",
         "--conf=sw/host/opentitantool/config/opentitan_verilator.json",
-        "--verilator-bin=$(location //hw:verilator)/sim-verilator/Vchip_sim_tb",
+        "--verilator-bin=$(location @//hw:verilator)/sim-verilator/Vchip_sim_tb",
         "--verilator-rom=$(location {rom})",
         "--verilator-flash=$(location {flash})",
         "--verilator-otp=$(location {otp})",
     ]
     required_data = [
-        "//sw/host/opentitantool:test_resources",
-        "//hw:verilator",
+        "@//sw/host/opentitantool:test_resources",
+        "@//hw:verilator",
+        "@//hw:fusesoc_ignore",
     ]
     required_tags = ["verilator"]
     kwargs.update(
@@ -128,7 +132,7 @@ def verilator_params(
         otp = otp,
         rom = rom,
         tags = required_tags + tags,
-        test_runner = _BASE_PARAMS["test_runner"],
+        test_runner = test_runner,
         timeout = timeout,
     )
     return kwargs
@@ -147,12 +151,13 @@ def cw310_params(
         local = _BASE_PARAMS["local"],
         otp = _BASE_PARAMS["otp"],
         rom = _BASE_PARAMS["rom"].format("fpga_cw310"),
-        tags = _BASE_PARAMS["tags"] + ["cpu:4"],
-        timeout = _BASE_PARAMS["timeout"],
+        tags = _BASE_PARAMS["tags"],
+        test_runner = _BASE_PARAMS["test_runner"],
         # CW310-specific Parameters
-        bitstream = "//hw/bitstream:test_rom",
+        bitstream = "@//hw/bitstream:test_rom",
         rom_kind = None,
         # None
+        timeout = "short",
         **kwargs):
     """A macro to create CW310 parameters for OpenTitan functional tests.
 
@@ -175,7 +180,7 @@ def cw310_params(
         "--conf=sw/host/opentitantool/config/opentitan_cw310.json",
     ]
     required_data = [
-        "//sw/host/opentitantool:test_resources",
+        "@//sw/host/opentitantool:test_resources",
     ]
     required_tags = [
         "cw310",
@@ -188,7 +193,7 @@ def cw310_params(
         otp = otp,
         rom = rom,
         tags = required_tags + tags,
-        test_runner = _BASE_PARAMS["test_runner"],
+        test_runner = test_runner,
         timeout = timeout,
         bitstream = bitstream,
         rom_kind = rom_kind,
@@ -284,15 +289,17 @@ def opentitan_functest(
             continue
 
         # Set test name.
-        test_name = "{}_{}".format(target, name)
+        test_name = "{}_{}".format(name, target)
         if "manual" not in params.get("tags"):
             all_tests.append(test_name)
 
         # Set flash image.
         if target in ["sim_dv", "sim_verilator"]:
             flash = "{}_prog_{}_scr_vmem64".format(name, target)
+            sw_logs_db = ["{}_prog_{}_logs_db".format(name, target)]
         else:
             flash = "{}_prog_{}_bin".format(name, target)
+            sw_logs_db = []
         if signed:
             flash += "_signed_{}".format(key)
 
@@ -349,6 +356,14 @@ def opentitan_functest(
             rom_kind = rom_kind,
             bitstream = bitstream,
         )
+        if target == "fpga_cw310":
+            # We attach the uarts configuration to the front of the command
+            # line so that they'll be parsed as global options rather than
+            # command-specific options.
+            concat_args = select({
+                "@//ci:lowrisc_fpga_cw310": ["--cw310-uarts=/dev/ttyACM_CW310_1,/dev/ttyACM_CW310_0"],
+                "//conditions:default": [],
+            }) + concat_args
         concat_data = _format_list(
             "data",
             data,
@@ -365,11 +380,23 @@ def opentitan_functest(
                 flash,
                 rom,
                 otp,
-            ] + concat_data,
+            ] + concat_data + sw_logs_db,
             **params
         )
 
     native.test_suite(
         name = name,
         tests = all_tests,
+        # In test_suites, tags perform a filtering function and will select
+        # matching tags internally instead of allowing filters to select
+        # test_suites.
+        # There are exceptions: "small", "medium", "large", "enourmous", "manual"
+        tags = [
+            # The manual tag is a special case and is applied to the test suite
+            # it prevents it from being included in wildcards so that
+            # --build_tag_filters=-verilator works as expected and excludes
+            # building verilator tests so the verilator build wont be invoked.
+            "manual",
+            # For more see https://bazel.build/reference/be/general#test_suite.tags
+        ],
     )

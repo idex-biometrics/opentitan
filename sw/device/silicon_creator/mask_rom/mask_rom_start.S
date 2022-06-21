@@ -6,6 +6,7 @@
 #include "hw/top_earlgrey/sw/autogen/top_earlgrey_memory.h"
 #include "aon_timer_regs.h"
 #include "ast_regs.h"
+#include "clkmgr_regs.h"
 #include "csrng_regs.h"
 #include "edn_regs.h"
 #include "entropy_src_regs.h"
@@ -48,9 +49,6 @@
    *
    * More information about Ibex's interrupts can be found here:
    *   https://ibex-core.readthedocs.io/en/latest/03_reference/exception_interrupts.html
-   *
-   * TODO(lowRISC/ibex#1419): if direct mode support is added to Ibex it probably
-   * makes sense to use it instead of vectored mode in the mask ROM.
    */
   .section .vectors, "ax"
   .balign 256
@@ -71,11 +69,7 @@ _mask_rom_interrupt_vector_asm:
 
   /**
    * Post C runtime initialization RISC-V vectored exception/interrupt handlers.
-   *
-   * This vector is placed into the .crt section so that .vectors doesn't need to
-   * be padded to a 256 byte boundary.
    */
-  .section .crt, "ax"
   .balign 256
   .global _mask_rom_interrupt_vector_c
   .type _mask_rom_interrupt_vector_c, @function
@@ -138,6 +132,16 @@ _mask_rom_start_boot:
    * need to be careful.
    */
 
+  // Check if we should halt here.
+  li   a0, (TOP_EARLGREY_OTP_CTRL_CORE_BASE_ADDR + \
+            OTP_CTRL_SW_CFG_WINDOW_REG_OFFSET)
+  lw   t0, OTP_CTRL_PARAM_CREATOR_SW_CFG_ROM_EXEC_EN_OFFSET(a0)
+  bnez t0, .L_exec_en
+.L_halt_loop:
+  wfi
+  j .L_halt_loop
+
+.L_exec_en:
   // Configure the power manager to enable resets.
   // Note: this enables all types of reset request for simplicity.
   li t0, TOP_EARLGREY_PWRMGR_AON_BASE_ADDR
@@ -149,10 +153,11 @@ _mask_rom_start_boot:
   sw t1, PWRMGR_CFG_CDC_SYNC_REG_OFFSET(t0)
 
   // Setup the watchdog bite timer in order to reset the chip if the ROM stalls.
+  // The value below corresponds to 1 s for a clock frequency of 200 kHz.
   // Since interrupts are disabled the watchdog bark will have no effect
   // therefore the bark threshold is just set to the highest possible value.
   li t0, TOP_EARLGREY_AON_TIMER_AON_BASE_ADDR
-  li t1, 0xffffffff // TODO(lowRISC/opentitan##10215): reduce bite timer value.
+  li t1, 0x30d40
   sw t1, AON_TIMER_WDOG_BITE_THOLD_REG_OFFSET(t0)
   li t1, 0xffffffff
   sw t1, AON_TIMER_WDOG_BARK_THOLD_REG_OFFSET(t0)
@@ -181,13 +186,12 @@ _mask_rom_start_boot:
             OTP_CTRL_PARAM_CREATOR_SW_CFG_AST_CFG_OFFSET)
   call crt_section_copy
 
-  // Wait for AST initialization to complete.
-  li   a0, TOP_EARLGREY_SENSOR_CTRL_BASE_ADDR
-.L_ast_done_loop:
-  lw   t0, SENSOR_CTRL_STATUS_REG_OFFSET(a0)
-  srli t0, t0, SENSOR_CTRL_STATUS_AST_INIT_DONE_BIT // no-op as bit index is currently 0
-  andi t0, t0, 0x1
-  beqz t0, .L_ast_done_loop
+  // Enable jittery clock if enabled in OTP.
+  li   a0, (TOP_EARLGREY_OTP_CTRL_CORE_BASE_ADDR + \
+            OTP_CTRL_SW_CFG_WINDOW_REG_OFFSET)
+  lw   t0, OTP_CTRL_PARAM_CREATOR_SW_CFG_JITTER_EN_OFFSET(a0)
+  li   a0, TOP_EARLGREY_CLKMGR_AON_BASE_ADDR
+  sw   t0, CLKMGR_JITTER_ENABLE_REG_OFFSET(a0)
 
 .L_ast_init_skip:
   // The following sequence enables the minimum level of entropy required to

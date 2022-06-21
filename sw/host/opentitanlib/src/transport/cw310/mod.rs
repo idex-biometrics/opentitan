@@ -35,66 +35,100 @@ struct Inner {
 
 pub struct CW310 {
     device: Rc<RefCell<usb::Backend>>,
+    uart_override: Vec<String>,
     inner: RefCell<Inner>,
 }
 
 impl CW310 {
-    // Pins needed for reset & bootstrap on the CW310 board.
-    const PIN_SRST: &'static str = "USB_A18";
-    const PIN_BOOTSTRAP: &'static str = "USB_A16";
     // Pins needed for SPI on the CW310 board.
     const PIN_CLK: &'static str = "USB_SPI_SCK";
     const PIN_SDI: &'static str = "USB_SPI_COPI";
     const PIN_SDO: &'static str = "USB_SPI_CIPO";
     const PIN_CS: &'static str = "USB_SPI_CS";
-    const PIN_JTAG: &'static str = "USB_A19";
+    // Pins needed for reset & bootstrap on the CW310 board.
+    const PIN_TRST: &'static str = "USB_A13";
+    const PIN_SRST: &'static str = "USB_A14";
+    const PIN_SW_STRAP0: &'static str = "USB_A15";
+    const PIN_SW_STRAP1: &'static str = "USB_A16";
+    const PIN_SW_STRAP2: &'static str = "USB_A17";
+    const PIN_TAP_STRAP0: &'static str = "USB_A18";
+    const PIN_TAP_STRAP1: &'static str = "USB_A19";
 
     pub fn new(
         usb_vid: Option<u16>,
         usb_pid: Option<u16>,
         usb_serial: Option<&str>,
+        uart_override: &[&str],
     ) -> anyhow::Result<Self> {
         let board = CW310 {
             device: Rc::new(RefCell::new(usb::Backend::new(
                 usb_vid, usb_pid, usb_serial,
             )?)),
+            uart_override: uart_override.iter().map(|s| s.to_string()).collect(),
             inner: RefCell::default(),
         };
-        board.init_direction()?;
+        board.init_pin_directions()?;
+        board.init_pin_values()?;
         Ok(board)
     }
 
     // Initialize the IO direction of some basic pins on the board.
-    fn init_direction(&self) -> anyhow::Result<()> {
+    fn init_pin_directions(&self) -> anyhow::Result<()> {
         let device = self.device.borrow();
+        device.pin_set_output(Self::PIN_TRST, true)?;
         device.pin_set_output(Self::PIN_SRST, true)?;
-        device.pin_set_output(Self::PIN_JTAG, true)?;
-        device.pin_set_output(Self::PIN_BOOTSTRAP, true)?;
+        device.pin_set_output(Self::PIN_TAP_STRAP0, true)?;
+        device.pin_set_output(Self::PIN_TAP_STRAP1, true)?;
+        device.pin_set_output(Self::PIN_SW_STRAP0, true)?;
+        device.pin_set_output(Self::PIN_SW_STRAP1, true)?;
+        device.pin_set_output(Self::PIN_SW_STRAP2, true)?;
+        Ok(())
+    }
+
+    // Initialize the values of the output pins on the board.
+    fn init_pin_values(&self) -> anyhow::Result<()> {
+        let device = self.device.borrow();
+        device.pin_set_state(Self::PIN_TRST, true)?;
+        device.pin_set_state(Self::PIN_SRST, true)?;
+        device.pin_set_state(Self::PIN_TAP_STRAP0, false)?;
+        device.pin_set_state(Self::PIN_TAP_STRAP1, true)?;
+        device.pin_set_state(Self::PIN_SW_STRAP0, false)?;
+        device.pin_set_state(Self::PIN_SW_STRAP1, false)?;
+        device.pin_set_state(Self::PIN_SW_STRAP2, false)?;
         Ok(())
     }
 
     fn open_uart(&self, instance: u32) -> Result<SerialPortUart> {
-        let usb = self.device.borrow();
-        let serial_number = usb.get_serial_number();
+        if self.uart_override.is_empty() {
+            let usb = self.device.borrow();
+            let serial_number = usb.get_serial_number();
 
-        let mut ports = serialport::available_ports()
-            .map_err(|e| UartError::EnumerationError(e.to_string()))?;
-        ports.retain(|port| {
-            if let SerialPortType::UsbPort(info) = &port.port_type {
-                if info.serial_number.as_deref() == Some(serial_number) {
-                    return true;
+            let mut ports = serialport::available_ports()
+                .map_err(|e| UartError::EnumerationError(e.to_string()))?;
+            ports.retain(|port| {
+                if let SerialPortType::UsbPort(info) = &port.port_type {
+                    if info.serial_number.as_deref() == Some(serial_number) {
+                        return true;
+                    }
                 }
-            }
-            false
-        });
-        // The CW board seems to have the last port connected as OpenTitan UART 0.
-        // Reverse the sort order so the last port will be instance 0.
-        ports.sort_by(|a, b| b.port_name.cmp(&a.port_name));
+                false
+            });
+            // The CW board seems to have the last port connected as OpenTitan UART 0.
+            // Reverse the sort order so the last port will be instance 0.
+            ports.sort_by(|a, b| b.port_name.cmp(&a.port_name));
 
-        let port = ports.get(instance as usize).ok_or_else(|| {
-            TransportError::InvalidInstance(TransportInterfaceType::Uart, instance.to_string())
-        })?;
-        SerialPortUart::open(&port.port_name)
+            let port = ports.get(instance as usize).ok_or_else(|| {
+                TransportError::InvalidInstance(TransportInterfaceType::Uart, instance.to_string())
+            })?;
+            SerialPortUart::open(&port.port_name)
+        } else {
+            let instance = instance as usize;
+            ensure!(
+                instance < self.uart_override.len(),
+                TransportError::InvalidInstance(TransportInterfaceType::Uart, instance.to_string())
+            );
+            SerialPortUart::open(&self.uart_override[instance])
+        }
     }
 }
 
@@ -148,6 +182,9 @@ impl Transport for CW310 {
 
     fn dispatch(&self, action: &dyn Any) -> Result<Option<Box<dyn Serialize>>> {
         if let Some(fpga_program) = action.downcast_ref::<FpgaProgram>() {
+            // Open the console UART.  We do this first so we get the receiver
+            // started and the uart buffering data for us.
+            let uart = self.uart("0")?;
             if fpga_program.bitstream.starts_with(b"__skip__") {
                 log::info!("Skip loading the __skip__ bitstream.");
                 return Ok(None);
@@ -158,8 +195,6 @@ impl Transport for CW310 {
                     &fpga_program.bitstream,
                     Some(fpga_program.rom_timeout),
                 )?;
-                // Open the console UART.
-                let uart = self.uart("0")?;
 
                 // Send a reset pulse so the ROM will print the FPGA version.
                 let reset_pin = self.gpio_pin(Self::PIN_SRST)?;
@@ -176,12 +211,25 @@ impl Transport for CW310 {
                     return Ok(None);
                 }
             }
-
             // Program the FPGA bitstream.
+            log::info!("Programming the FPGA bitstream.");
             let usb = self.device.borrow();
             usb.spi1_enable(false)?;
-            usb.pin_set_state(CW310::PIN_JTAG, true)?;
-            usb.fpga_program(&fpga_program.bitstream)?;
+            usb.fpga_program(
+                &fpga_program.bitstream,
+                fpga_program.progress.as_ref().map(Box::as_ref),
+            )?;
+            Ok(None)
+        } else if let Some(_set_pll) = action.downcast_ref::<SetPll>() {
+            const TARGET_FREQ: u32 = 100_000_000;
+            let usb = self.device.borrow();
+            usb.pll_enable(true)?;
+            usb.pll_out_freq_set(1, TARGET_FREQ)?;
+            usb.pll_out_freq_set(2, TARGET_FREQ)?;
+            usb.pll_out_enable(0, false)?;
+            usb.pll_out_enable(1, true)?;
+            usb.pll_out_enable(2, false)?;
+            usb.pll_write_defaults()?;
             Ok(None)
         } else {
             Err(TransportError::UnsupportedOperation.into())
@@ -190,7 +238,7 @@ impl Transport for CW310 {
 }
 
 /// Command for Transport::dispatch().
-pub struct FpgaProgram {
+pub struct FpgaProgram<'a> {
     /// The bitstream content to load into the FPGA.
     pub bitstream: Vec<u8>,
     /// What type of ROM to expect.
@@ -199,4 +247,10 @@ pub struct FpgaProgram {
     pub rom_reset_pulse: Duration,
     /// How long to wait for the ROM to print its type and version.
     pub rom_timeout: Duration,
+    /// A progress function to provide user feedback.
+    /// Will be called with the address and length of each chunk sent to the target device.
+    pub progress: Option<Box<dyn Fn(u32, u32) -> () + 'a>>,
 }
+
+/// Command for Transport::dispatch().
+pub struct SetPll {}

@@ -18,6 +18,7 @@ use crate::io::spi::SpiParams;
 use crate::io::uart::UartParams;
 use crate::transport::Capability;
 
+mod eeprom;
 mod legacy;
 mod primitive;
 mod rescue;
@@ -69,6 +70,7 @@ trait UpdateProtocol {
         container: &Bootstrap,
         transport: &TransportWrapper,
         payload: &[u8],
+        progress: &dyn Fn(u32, u32),
     ) -> Result<()>;
 }
 
@@ -85,7 +87,7 @@ pub struct BootstrapOptions {
         long,
         possible_values = &BootstrapProtocol::variants(),
         case_insensitive = true,
-        default_value = "primitive",
+        default_value = "eeprom",
         help = "Bootstrap protocol to use"
     )]
     pub protocol: BootstrapProtocol,
@@ -103,7 +105,6 @@ pub struct Bootstrap<'a> {
     pub uart_params: &'a UartParams,
     pub spi_params: &'a SpiParams,
     reset_pin: Rc<dyn GpioPin>,
-    bootstrap_pin: Rc<dyn GpioPin>,
     reset_delay: Duration,
 }
 
@@ -116,6 +117,18 @@ impl<'a> Bootstrap<'a> {
         transport: &TransportWrapper,
         options: &BootstrapOptions,
         payload: &[u8],
+    ) -> Result<()> {
+        Self::update_with_progress(transport, options, payload, |_, _| {})
+    }
+
+    /// Perform the update, sending the firmware `payload` to a SPI or UART target depending on
+    /// given `options`, which specifies protocol and port to use.  The `progress` callback will
+    /// be called with the flash address and length of each chunk sent to the target device.
+    pub fn update_with_progress(
+        transport: &TransportWrapper,
+        options: &BootstrapOptions,
+        payload: &[u8],
+        progress: impl Fn(u32, u32),
     ) -> Result<()> {
         if transport
             .capabilities()?
@@ -133,9 +146,7 @@ impl<'a> Bootstrap<'a> {
             BootstrapProtocol::Primitive => Box::new(primitive::Primitive::new(&options)),
             BootstrapProtocol::Legacy => Box::new(legacy::Legacy::new(&options)),
             BootstrapProtocol::Rescue => Box::new(rescue::Rescue::new(&options)),
-            BootstrapProtocol::Eeprom => {
-                unimplemented!();
-            }
+            BootstrapProtocol::Eeprom => Box::new(eeprom::Eeprom::new()),
             BootstrapProtocol::Emulator => {
                 // Not intended to be implemented by this struct.
                 unimplemented!();
@@ -146,10 +157,9 @@ impl<'a> Bootstrap<'a> {
             uart_params: &options.uart_params,
             spi_params: &options.spi_params,
             reset_pin: transport.gpio_pin("RESET")?,
-            bootstrap_pin: transport.gpio_pin("BOOTSTRAP")?,
             reset_delay: options.reset_delay.unwrap_or(Self::RESET_DELAY),
         }
-        .do_update(updater, transport, payload)
+        .do_update(updater, transport, payload, &progress)
     }
 
     fn do_update(
@@ -157,27 +167,28 @@ impl<'a> Bootstrap<'a> {
         updater: Box<dyn UpdateProtocol>,
         transport: &TransportWrapper,
         payload: &[u8],
+        progress: &dyn Fn(u32, u32),
     ) -> Result<()> {
         updater.verify_capabilities(&self, transport)?;
         let perform_bootstrap_reset = updater.uses_common_bootstrap_reset();
 
         if perform_bootstrap_reset {
             log::info!("Asserting bootstrap pins...");
-            self.bootstrap_pin.write(true)?;
+            transport.apply_pin_strapping("ROM_BOOTSTRAP")?;
 
             log::info!("Reseting the target...");
-            self.reset_pin.write(false)?; // Low active
+            transport.apply_pin_strapping("RESET")?;
             std::thread::sleep(self.reset_delay);
-            self.reset_pin.write(true)?; // Release reset
+            transport.remove_pin_strapping("RESET")?;
             std::thread::sleep(self.reset_delay);
 
             log::info!("Performing bootstrap...");
         }
-        let result = updater.update(&self, transport, payload);
+        let result = updater.update(&self, transport, payload, progress);
 
         if perform_bootstrap_reset {
             log::info!("Releasing bootstrap pins...");
-            self.bootstrap_pin.write(false)?;
+            transport.remove_pin_strapping("ROM_BOOTSTRAP")?;
         }
         result
     }

@@ -4,9 +4,13 @@
 
 load("@com_github_bazelbuild_buildtools//buildifier:def.bzl", "buildifier")
 load("//rules:quality.bzl", "clang_format_check", "html_coverage_report")
+load("//rules:cargo.bzl", "cargo_raze")
 load("@lowrisc_lint//rules:rules.bzl", "licence_check")
+load("@rules_rust//rust:defs.bzl", "rust_analyzer")
 
 package(default_visibility = ["//visibility:public"])
+
+exports_files(["python-requirements.txt"])
 
 unbuildify = [
     "./WORKSPACE",  # Prevent Buildifier from inserting unnecessary newlines.
@@ -44,7 +48,7 @@ clang_format_check(
         "./**/vendor/**",
         # Rust cargo build dirs
         "./**/target/**",
-        # Meson build dirs
+        # (Old) Meson build dirs that Bazel artifacts are still copied into.
         "./build-out/**",
         "./build-bin/**",
         # fusesoc build dir
@@ -60,7 +64,7 @@ clang_format_check(
         "./**/vendor/**",
         # Rust cargo build dirs
         "./**/target/**",
-        # Meson build dirs
+        # (Old) Meson build dirs that Bazel artifacts are still copied into.
         "./build-out/**",
         "./build-bin/**",
         # fusesoc build dir
@@ -82,4 +86,24 @@ filegroup(
     ],
 )
 
-exports_files(["python-requirements.txt"])
+alias(
+    name = "gen_rust_project",
+    actual = "@rules_rust//tools/rust_analyzer:gen_rust_project",
+)
+
+# Do not use directly, run `:gen_rust_project` instead.
+rust_analyzer(
+    name = "rust_analyzer",
+    targets = [
+        "//sw/host/opentitanlib:opentitanlib",
+        "//sw/host/opentitansession:opentitansession",
+        "//sw/host/opentitantool:opentitantool",
+    ],
+)
+
+cargo_raze(
+    name = "cargo_raze",
+    cargo = [
+        "third_party/rust/crates/Cargo.toml",
+    ],
+)

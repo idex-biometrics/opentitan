@@ -79,7 +79,7 @@ static const dif_hmac_digest_t kExpectedHmacDigest = {
         },
 };
 
-bool test_main() {
+bool test_main(void) {
   dif_hmac_t hmac;
   mmio_region_t base_addr = mmio_region_from_addr(TOP_EARLGREY_HMAC_BASE_ADDR);
   CHECK_DIF_OK(dif_hmac_init(base_addr, &hmac));
@@ -92,8 +92,8 @@ bool test_main() {
   CHECK_DIF_OK(dif_hmac_process(&hmac));
   dif_hmac_digest_t key_digest;
   hmac_testutils_finish_polled(&hmac, &key_digest);
-  CHECK_BUFFER(key_digest.digest, kExpectedShaDigest.digest,
-               ARRAYSIZE(key_digest.digest));
+  CHECK_ARRAYS_EQ(key_digest.digest, kExpectedShaDigest.digest,
+                  ARRAYSIZE(key_digest.digest));
 
   // Generate HMAC final digest, using the resulted SHA256 digest over the
   // `kHmacLongKey`.

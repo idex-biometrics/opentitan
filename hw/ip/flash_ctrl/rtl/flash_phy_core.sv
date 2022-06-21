@@ -59,7 +59,8 @@ module flash_phy_core
   output logic                       intg_ecc_err_o,
   output logic                       spurious_ack_o,
   output logic                       arb_err_o,
-  output logic                       host_gnt_err_o
+  output logic                       host_gnt_err_o,
+  output logic                       fifo_err_o
 );
 
 
@@ -101,7 +102,7 @@ module flash_phy_core
   state_e state_q, state_d;
 
   // request signals to flash macro
-  logic [PhyOps-1:0] reqs;
+  logic [PhyLastOp-1:0] reqs;
 
   // host select for address
   logic host_sel;
@@ -236,7 +237,7 @@ module flash_phy_core
   // controller request can only win after the entire read pipeline
   // clears
   logic ctrl_req;
-  assign ctrl_req = req_i & rd_stage_idle & ~host_req &
+  assign ctrl_req = req_i & rd_stage_idle &
                     mubi4_test_false_strict(flash_disable[CtrlDisableIdx]);
 
   logic [1:0] data_tie_off [2];
@@ -244,23 +245,29 @@ module flash_phy_core
 
   // SEC_CM: PHY_ARBITER.CTRL.REDUN
   logic phy_req;
+  logic phy_rdy;
+
   prim_arbiter_tree_dup #(
     .N(2),
     .DW(2),
-    .EnDataPort('0)
+    .EnDataPort('0),
+    .FixedArb(1)
   ) u_host_arb (
     .clk_i,
     .rst_ni,
     .req_chk_i('0),
-    .req_i({host_req, ctrl_req}),
+    .req_i({ctrl_req, host_req}),
     .data_i(data_tie_off),
-    .gnt_o({host_req_rdy_o, ctrl_gnt}),
+    .gnt_o({ctrl_gnt, host_req_rdy_o}),
     .idx_o(),
     .valid_o(phy_req),
     .data_o(),
-    .ready_i(rd_stage_rdy),
+    .ready_i(phy_rdy),
     .err_o(arb_err_o)
   );
+
+  assign phy_rdy = phy_req & host_req ? rd_stage_rdy : rd_stage_idle;
+
 
   // if request happens at the same time as a host grant, increment count
   assign inc_arb_cnt = req_i & host_gnt;
@@ -395,7 +402,8 @@ module flash_phy_core
     .ecc_single_err_o,
     .ecc_addr_o,
     .relbl_ecc_err_o,
-    .intg_ecc_err_o
+    .intg_ecc_err_o,
+    .fifo_err_o
     );
 
   ////////////////////////

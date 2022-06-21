@@ -285,7 +285,8 @@ module hmac
 
     .rvalid_o(fifo_rvalid),
     .rready_i(fifo_rready),
-    .rdata_o (fifo_rdata)
+    .rdata_o (fifo_rdata),
+    .err_o   ()
   );
 
   // TL ADAPTER SRAM
@@ -555,6 +556,8 @@ module hmac
   //  - HMAC_CORE --> hmac_core_idle
   //  - SHA2_CORE --> sha_core_idle
   //  - Clean interrupt status
+  // ICEBOX(#12958): Revise prim_packer and replace `reg_fifo_wvalid` to the
+  // empty status.
   logic idle;
   assign idle = !reg_fifo_wvalid && !fifo_rvalid
               && hmac_core_idle && sha_core_idle;

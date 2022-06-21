@@ -4,17 +4,25 @@
 load("@python3//:defs.bzl", "interpreter")
 
 def _bitstreams_repo_impl(rctx):
-    rctx.execute(
+    # First, check if an existing pre-built bitstream cache repo exists, and if
+    # so, use it instead of building one.
+    cache_path = rctx.os.environ.get(
+        "BAZEL_BITSTREAMS_CACHE",
+        rctx.attr.cache,
+    )
+    result = rctx.execute(
         [
             rctx.path(rctx.attr.python_interpreter),
             rctx.attr._cache_manager,
             "--build-file=BUILD.bazel",
             "--bucket-url={}".format(rctx.attr.bucket_url),
-            "--cache={}".format(rctx.attr.cache),
+            "--cache={}".format(cache_path),
             "--refresh-time={}".format(rctx.attr.refresh_time),
         ],
         quiet = False,
     )
+    if result.return_code != 0:
+        fail("Bitstream cache not initialized properly.")
 
 # The bitstream repo is evaluated on every invocation of bazel.
 # Once the cache is initialized, a typical invocation will find the latest
@@ -66,6 +74,6 @@ bitstreams_repo = repository_rule(
             allow_files = True,
         ),
     },
-    environ = ["BITSTREAM"],
+    environ = ["BAZEL_BITSTREAMS_CACHE", "BITSTREAM"],
     local = True,
 )

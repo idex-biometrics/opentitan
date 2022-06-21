@@ -23,94 +23,6 @@
 extern "C" {
 #endif  // __cplusplus
 
-enum {
-  /**
-   * Maximum pre-conditioning FIFO capacity.
-   */
-  // TODO: Synchronize value with hardware.
-  kDifEntropySrcFifoMaxCapacity = 64,
-
-  /**
-   * Default firmware observe FIFO threshold.
-   *
-   * Default value used to trigger the `kDifEntropySrcIrqEsObserveFifoReady`
-   * interrupt when enabled.
-   */
-  kDifEntropyFifoIntDefaultThreshold = 32,
-};
-
-/**
- * A statistical test on the bits emitted by an entropy source.
- */
-typedef enum dif_entropy_src_test {
-  /**
-   * An SP 800-90B repetition count test.
-   *
-   * This test screens for stuck bits, or a total failure of the noise source.
-   * This test fails if any sequence of bits repeats too many times in a row
-   * for too many samples.
-   */
-  kDifEntropySrcTestRepCount,
-
-  /**
-   * An SP 800-90B adaptive proportion test.
-   *
-   * This test screens for statistical bias in the number of ones or zeros
-   * output by the noise source.
-   */
-  kDifEntropySrcTestAdaptiveProportion,
-
-  /**
-   * A bucket test.
-   *
-   * This test looks for correlations between individual noise channels.
-   */
-  kDifEntropySrcTestBucket,
-
-  /**
-   * A "Markov" test.
-   *
-   * This test looks for unexpected first-order temporal correlations
-   * between individual noise channels.
-   */
-  kDifEntropySrcTestMarkov,
-
-  /**
-   * A firmware-driven "mailbox" test.
-   *
-   * This test allows firmware to inspect 2kbit blocks of entropy, and signal
-   * potential concerns to the hardware.
-   */
-  kDifEntropySrcTestMailbox,
-
-  /**
-   * A vendor-specific test implemented externally to the IP.
-   */
-  kDifEntropySrcTestVendorSpecific,
-
-  /** \internal */
-  kDifEntropySrcTestNumVariants,
-} dif_entropy_src_test_t;
-
-/**
- * A mode of operation for the entropy source.
- */
-typedef enum dif_entropy_src_mode {
-  /**
-   * Indicates that the source is disabled.
-   */
-  kDifEntropySrcModeDisabled = 0,
-
-  /**
-   * The physical true random number generator mode.
-   *
-   * This mode uses a physical random noise generator for operation, and is
-   * truly random. This noise generator is compatible with SP 800-90B.
-   */
-  kDifEntropySrcModePtrng = 1,
-
-} dif_entropy_src_mode_t;
-
 /**
  * A single-bit RNG mode, where only one bit is sampled.
  */
@@ -119,18 +31,22 @@ typedef enum dif_entropy_src_single_bit_mode {
    * Single-bit-mode, sampling the zeroth bit.
    */
   kDifEntropySrcSingleBitMode0 = 0,
+
   /**
    * Single-bit-mode, sampling the first bit.
    */
   kDifEntropySrcSingleBitMode1 = 1,
+
   /**
    * Single-bit-mode, sampling the second bit.
    */
   kDifEntropySrcSingleBitMode2 = 2,
+
   /**
    * Single-bit-mode, sampling the third bit.
    */
   kDifEntropySrcSingleBitMode3 = 3,
+
   /**
    * Indicates that single-bit-mode is disabled.
    */
@@ -138,73 +54,22 @@ typedef enum dif_entropy_src_single_bit_mode {
 } dif_entropy_src_single_bit_mode_t;
 
 /**
- * Criteria used by various entropy source health tests to decide whether the
- * test has failed.
- */
-typedef struct dif_entropy_src_test_config {
-  /**
-   * The size of the window to use for health tests, in bits.
-   */
-  uint16_t health_test_window;
-
-  /**
-   * The threshold for the repetition count test.
-   */
-  uint16_t rep_count_threshold;
-
-  /**
-   * The value range for the adaptive proportion test.
-   *
-   * The first value is the lower threshold; the second is the higher
-   * threshold.
-   */
-  uint16_t adaptive_range[2];
-
-  /**
-   * The threshold for the bucket test.
-   */
-  uint16_t bucket_threshold;
-
-  /**
-   * The range for the "Markov" test.
-   *
-   * The first value is the lower threshold; the second is the higher
-   * threshold.
-   */
-  uint16_t markov_range[2];
-
-  /**
-   * The value range for the vendor-specific test.
-   *
-   * The first value is the lower threshold; the second is the higher
-   * threshold. However, vendors may interpret these values however they wish.
-   */
-  uint16_t vendor_range[2];
-} dif_entropy_src_test_config_t;
-
-/**
  * Firmware override parameters for an entropy source.
  */
 typedef struct dif_entropy_src_fw_override_config {
   /**
-   * Enables firmware monitoring of the post-health test entropy via
-   * `dif_entropy_fifo_read()` calls.
-   */
-  bool enable;
-
-  /**
-   * Enables fimrware to insert entropy bits back into the pre-coditioner block
+   * Enables firmware to insert entropy bits back into the pre-conditioner block
    * via `dif_entropy_fifo_write()` calls. This feature is useful when the
    * firmware is required to implement additional health checks, and to perform
    * known answer tests of the preconditioner function.
    *
-   * This field requires `fw_override_enable` to be set.
+   * To take effect, this requires the firmware override feature to be enabled.
    */
   bool entropy_insert_enable;
 
   /**
    * This field sets the depth of the observe FIFO hardware buffer used when
-   * `fw_override_enable` is set to true.
+   * the firmware override feature is enabled.
    */
   uint8_t buffer_threshold;
 } dif_entropy_src_fw_override_config_t;
@@ -217,42 +82,6 @@ typedef struct dif_entropy_src_fw_override_config {
  */
 typedef struct dif_entropy_src_config {
   /**
-   * The mode to configure the entropy source in.
-   */
-  dif_entropy_src_mode_t mode;
-
-  /**
-   * Which health tests to enable.
-   *
-   * The variants of `dif_entropy_src_test` are used to index fields in this
-   * array.
-   *
-   * Note that the value at `kDifEntropySrcTestMailbox` is ignored, since this
-   * test is driven by the firmware, not the hardware.
-   */
-  bool tests[kDifEntropySrcTestNumVariants];
-
-  /**
-   * If set, all health-test-related registers will be cleared.
-   */
-  // TODO: Consider adding a separate setter for this config bit depending on
-  // hardware behavior.
-  bool reset_health_test_registers;
-
-  /**
-   * Specifies which single-bit-mode to use, if any at all.
-   */
-  dif_entropy_src_single_bit_mode_t single_bit_mode;
-
-  /**
-   * If set, entropy will be routed to a firmware-visible register instead of
-   * being distributed to other hardware IPs.
-   */
-  // Open Question: Make this its own function? Seems like something that would
-  // be toggled a lot.
-  bool route_to_firmware;
-
-  /**
    * If set, FIPS compliant entropy will be generated by this module after being
    * processed by an SP 800-90B compliant conditioning function.
    *
@@ -260,18 +89,116 @@ typedef struct dif_entropy_src_config {
    * support by setting this field to false. In such case, software is
    * responsible for implementing the conditioning function.
    */
-  bool fips_mode;
+  bool fips_enable;
 
   /**
-   * Configuration parameters for health tests.
+   * If set, entropy will be routed to a firmware-visible register instead of
+   * being distributed to other hardware IPs.
    */
-  dif_entropy_src_test_config_t test_config;
+  bool route_to_firmware;
 
   /**
-   * Configuration parameters for firmware override buffer.
+   * Specifies which single-bit-mode to use, if any at all.
    */
-  dif_entropy_src_fw_override_config_t fw_override;
+  dif_entropy_src_single_bit_mode_t single_bit_mode;
+
+  /**
+   * Controls the scope (either by-line or by-sum) of the health tests.
+   *
+   * If true, the Adaptive Proportion and Markov Tests will accumulate all RNG
+   * input lines into a single score, and thresholds will be applied to the sum
+   * of all the entropy input lines.
+   *
+   * If false, the RNG input lines are all scored individually. A statistical
+   * deviation in any one input line, be it due to coincidence or failure, will
+   * force rejection of the sample, and count toward the total alert count.
+   */
+  bool health_test_threshold_scope;
+
+  /**
+   * The size of the window used for health tests.
+   *
+   * Units: bits
+   */
+  uint16_t health_test_window_size;
 } dif_entropy_src_config_t;
+
+/**
+ * A statistical test on the bits emitted by an entropy source.
+ */
+typedef enum dif_entropy_src_test {
+  /**
+   * An SP 800-90B repetition count test.
+   *
+   * This test screens for stuck bits, or a total failure of the noise source.
+   * This test fails if any sequence of bits repeats too many times in a row
+   * for too many samples.
+   */
+  kDifEntropySrcTestRepetitionCount = 0,
+
+  /**
+   * An SP 800-90B adaptive proportion test.
+   *
+   * This test screens for statistical bias in the number of ones or zeros
+   * output by the noise source.
+   */
+  kDifEntropySrcTestAdaptiveProportion = 1,
+
+  /**
+   * A bucket test.
+   *
+   * This test looks for correlations between individual noise channels.
+   */
+  kDifEntropySrcTestBucket = 2,
+
+  /**
+   * A "Markov" test.
+   *
+   * This test looks for unexpected first-order temporal correlations
+   * between individual noise channels.
+   */
+  kDifEntropySrcTestMarkov = 3,
+
+  /**
+   * A firmware-driven "mailbox" test.
+   *
+   * This test allows firmware to inspect 2kbit blocks of entropy, and signal
+   * potential concerns to the hardware.
+   */
+  kDifEntropySrcTestMailbox = 4,
+
+  /**
+   * A vendor-specific test implemented externally to the IP.
+   */
+  kDifEntropySrcTestVendorSpecific = 5,
+
+  /** \internal */
+  kDifEntropySrcTestNumVariants = 6,
+} dif_entropy_src_test_t;
+
+/**
+ * Criteria used by various entropy source health tests to decide whether the
+ * test has failed.
+ */
+typedef struct dif_entropy_src_health_test_config {
+  /**
+   * The entropy source health test type to configure.
+   */
+  dif_entropy_src_test_t test_type;
+
+  /**
+   * The high threshold for the health test.
+   */
+  uint16_t high_threshold;
+
+  /**
+   * The low threshold for the health test.
+   *
+   * If the corresponding health test has no low threshold, set to 0, otherwise
+   * `dif_entropy_src_health_test_configure()` will return `kDifBadArg`.
+   */
+  uint16_t low_threshold;
+} dif_entropy_src_health_test_config_t;
 
 /**
  * Revision information for an entropy source.
@@ -324,15 +251,49 @@ typedef struct dif_entropy_src_test_stats {
 /**
  * Configures entropy source with runtime information.
  *
- * This function should need to be called once for the lifetime of `handle`.
+ * This function should only need to be called once for the lifetime of the
+ * `entropy` handle.
  *
  * @param entropy An entropy source handle.
  * @param config Runtime configuration parameters.
+ * @param enabled The enablement state of the entropy source.
  * @return The result of the operation.
  */
 OT_WARN_UNUSED_RESULT
 dif_result_t dif_entropy_src_configure(const dif_entropy_src_t *entropy_src,
-                                       dif_entropy_src_config_t config);
+                                       dif_entropy_src_config_t config,
+                                       dif_toggle_t enabled);
+
+/**
+ * Configures entropy source firmware override feature with runtime information.
+ *
+ * This function should only need to be called once for the lifetime of the
+ * `entropy` handle.
+ *
+ * @param entropy An entropy source handle.
+ * @param config Runtime configuration parameters for firmware override.
+ * @param enabled The enablement state of the firmware override option.
+ * @return The result of the operation.
+ */
+OT_WARN_UNUSED_RESULT
+dif_result_t dif_entropy_src_fw_override_configure(
+    const dif_entropy_src_t *entropy_src,
+    dif_entropy_src_fw_override_config_t config, dif_toggle_t enabled);
+
+/**
+ * Configures an entropy source health test feature with runtime information.
+ *
+ * This function should only need to be called once for each health test that
+ * requires configuration for the lifetime of the `entropy` handle.
+ *
+ * @param entropy An entropy source handle.
+ * @param config Runtime configuration parameters for the health test.
+ * @return The result of the operation.
+ */
+OT_WARN_UNUSED_RESULT
+dif_result_t dif_entropy_src_health_test_configure(
+    const dif_entropy_src_t *entropy_src,
+    dif_entropy_src_health_test_config_t config);
 
 /**
  * Queries the entropy source IP for its revision information.
@@ -408,7 +369,7 @@ dif_result_t dif_entropy_src_read(const dif_entropy_src_t *entropy_src,
  *
  * Entropy source must be configured with firmware override mode enabled, and
  * the `len` parameter must be strictly less than the FIFO threshold set in the
- * firware override parameters.
+ * firmware override parameters.
  *
  * `buf` may be `NULL`; in this case, reads will be discarded.
  *

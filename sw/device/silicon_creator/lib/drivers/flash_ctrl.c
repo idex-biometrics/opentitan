@@ -111,7 +111,6 @@ static void transaction_start(transaction_params_t params) {
   reg =
       bitfield_field32_write(reg, FLASH_CTRL_CONTROL_INFO_SEL_FIELD, info_type);
   reg = bitfield_bit32_write(reg, FLASH_CTRL_CONTROL_ERASE_SEL_BIT, bank_erase);
-  // TODO(#3353): Remove -1 when flash_ctrl is updated.
   reg = bitfield_field32_write(reg, FLASH_CTRL_CONTROL_NUM_FIELD,
                                params.word_count - 1);
   abs_mmio_write32(kBase + FLASH_CTRL_CONTROL_REG_OFFSET, reg);
@@ -526,6 +525,27 @@ void flash_ctrl_info_cfg_set(flash_ctrl_info_page_t info_page,
   reg = bitfield_field32_write(
       reg, FLASH_CTRL_BANK0_INFO0_PAGE_CFG_0_HE_EN_0_FIELD, cfg.he);
   sec_mmio_write32(cfg_addr, reg);
+}
+
+void flash_ctrl_bank_erase_perms_set(hardened_bool_t enable) {
+  uint32_t reg;
+  switch (launder32(enable)) {
+    case kHardenedBoolTrue:
+      HARDENED_CHECK_EQ(enable, kHardenedBoolTrue);
+      reg = bitfield_bit32_write(
+          0, FLASH_CTRL_MP_BANK_CFG_SHADOWED_ERASE_EN_0_BIT, true);
+      reg = bitfield_bit32_write(
+          reg, FLASH_CTRL_MP_BANK_CFG_SHADOWED_ERASE_EN_1_BIT, true);
+      break;
+    case kHardenedBoolFalse:
+      HARDENED_CHECK_EQ(enable, kHardenedBoolFalse);
+      reg = 0;
+      break;
+    default:
+      HARDENED_UNREACHABLE();
+  }
+  sec_mmio_write32_shadowed(kBase + FLASH_CTRL_MP_BANK_CFG_SHADOWED_REG_OFFSET,
+                            reg);
 }
 
 /**

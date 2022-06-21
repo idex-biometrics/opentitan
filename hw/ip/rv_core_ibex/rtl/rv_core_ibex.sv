@@ -13,22 +13,23 @@ module rv_core_ibex
   import rv_core_ibex_reg_pkg::*;
 #(
   parameter logic [NumAlerts-1:0] AlertAsyncOn     = {NumAlerts{1'b1}},
-  parameter bit                   PMPEnable        = 1'b0,
+  parameter bit                   PMPEnable        = 1'b1,
   parameter int unsigned          PMPGranularity   = 0,
   parameter int unsigned          PMPNumRegions    = 16,
   parameter int unsigned          MHPMCounterNum   = 10,
   parameter int unsigned          MHPMCounterWidth = 32,
   parameter bit                   RV32E            = 0,
   parameter ibex_pkg::rv32m_e     RV32M            = ibex_pkg::RV32MSingleCycle,
-  parameter ibex_pkg::rv32b_e     RV32B            = ibex_pkg::RV32BNone,
+  parameter ibex_pkg::rv32b_e     RV32B            = ibex_pkg::RV32BOTEarlGrey,
   parameter ibex_pkg::regfile_e   RegFile          = ibex_pkg::RegFileFF,
   parameter bit                   BranchTargetALU  = 1'b1,
   parameter bit                   WritebackStage   = 1'b1,
   parameter bit                   ICache           = 1'b1,
   parameter bit                   ICacheECC        = 1'b1,
   parameter bit                   ICacheScramble   = 1'b1,
-  parameter bit                   BranchPredictor  = 1'b1,
+  parameter bit                   BranchPredictor  = 1'b0,
   parameter bit                   DbgTriggerEn     = 1'b1,
+  parameter int unsigned          DbgHwBreakNum    = 4,
   parameter bit                   SecureIbex       = 1'b1,
   parameter ibex_pkg::lfsr_seed_t RndCnstLfsrSeed  = ibex_pkg::RndCnstLfsrSeedDefault,
   parameter ibex_pkg::lfsr_perm_t RndCnstLfsrPerm  = ibex_pkg::RndCnstLfsrPermDefault,
@@ -183,6 +184,10 @@ module rv_core_ibex
   logic [31:0] rvfi_mem_wdata;
 `endif
 
+  // core sleeping
+  logic core_sleep;
+
+
   // errors and core alert events
   logic ibus_intg_err, dbus_intg_err;
   logic alert_minor, alert_major_internal, alert_major_bus;
@@ -264,6 +269,21 @@ module rv_core_ibex
     .lc_en_o(pwrmgr_cpu_en)
   );
 
+  // TODO: This is a hoaky fix, we really should converge everthing
+  // through rv_plic.
+  // timer interrupts do not come from
+  // rv_plic and may not be synchronous to the ibex core
+  logic irq_timer_sync;
+  prim_flop_2sync #(
+    .Width(1)
+  ) u_intr_timer_sync (
+    .clk_i,
+    .rst_ni,
+    .d_i(irq_timer_i),
+    .q_o(irq_timer_sync)
+  );
+
+
   logic irq_software;
   logic irq_timer;
   logic irq_external;
@@ -272,7 +292,7 @@ module rv_core_ibex
     .Width(3)
   ) u_prim_buf_irq (
     .in_i({irq_software_i,
-           irq_timer_i,
+           irq_timer_sync,
            irq_external_i}),
     .out_o({irq_software,
             irq_timer,
@@ -355,6 +375,7 @@ module rv_core_ibex
     .ICacheScramble           ( ICacheScramble           ),
     .BranchPredictor          ( BranchPredictor          ),
     .DbgTriggerEn             ( DbgTriggerEn             ),
+    .DbgHwBreakNum            ( DbgHwBreakNum            ),
     // SEC_CM: LOGIC.SHADOW
     // SEC_CM: PC.CTRL_FLOW.CONSISTENCY, CTRL_FLOW.UNPREDICTABLE, CORE.DATA_REG_SW.SCA
     // SEC_CM: EXCEPTION.CTRL_FLOW.GLOBAL_ESC, EXCEPTION.CTRL_FLOW.LOCAL_ESC
@@ -447,22 +468,36 @@ module rv_core_ibex
     .alert_minor_o          (alert_minor),
     .alert_major_internal_o (alert_major_internal),
     .alert_major_bus_o      (alert_major_bus),
-    .core_sleep_o           (pwrmgr_o.core_sleeping)
+    .core_sleep_o           (core_sleep)
   );
 
-  ibex_pkg::crash_dump_t crash_dump_previous;
-  logic previous_valid;
+  prim_buf #(
+    .Width(1)
+  ) u_core_sleeping_buf (
+    .in_i(core_sleep),
+    .out_o(pwrmgr_o.core_sleeping)
+  );
+
+
+
+  logic prev_valid;
+  logic [31:0] prev_exception_pc;
+  logic [31:0] prev_exception_addr;
 
   assign crash_dump_o.current = crash_dump;
-  assign crash_dump_o.previous = crash_dump_previous;
-  assign crash_dump_o.previous_valid = previous_valid;
+  assign crash_dump_o.prev_valid = prev_valid;
+  assign crash_dump_o.prev_exception_pc = prev_exception_pc;
+  assign crash_dump_o.prev_exception_addr = prev_exception_addr;
 
   always_ff @(posedge clk_i or negedge rst_ni) begin
     if (!rst_ni) begin
-      previous_valid <= '0;
+      prev_valid <= '0;
+      prev_exception_pc <= '0;
+      prev_exception_addr <= '0;
     end else if (double_fault) begin
-      previous_valid <= '1;
-      crash_dump_previous <= crash_dump;
+      prev_valid <= 1'b1;
+      prev_exception_pc <= crash_dump.exception_pc;
+      prev_exception_addr <= crash_dump.exception_addr;
     end
   end
 

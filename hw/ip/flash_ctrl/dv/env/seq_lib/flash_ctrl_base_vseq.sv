@@ -63,7 +63,7 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
 
   virtual task pre_start();
     `uvm_create_on(callback_vseq, p_sequencer);
-    //otp_model();  // Start OTP Model
+    otp_model();  // Start OTP Model
     super.pre_start();
   endtask : pre_start
 
@@ -139,8 +139,8 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
     csr_wr(.ptr(ral.mp_region[index]), .value(data));
   endtask : flash_ctrl_mp_region_cfg
 
-  // Configure the protection for the "default" region (all pages that do not fall into one
-  // of the memory protection regions).
+  // Configure the protection for the "default" region (all pages that do not fall
+  // into one of the memory protection regions).
   virtual task flash_ctrl_default_region_cfg(mubi4_t read_en     = MuBi4True,
                                              mubi4_t program_en  = MuBi4True,
                                              mubi4_t erase_en    = MuBi4True,
@@ -279,6 +279,7 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
     info_sel = flash_op.partition >> 1;
     data = get_csr_val_with_updated_field(ral.control.start, data, 1'b1);
     data = data | get_csr_val_with_updated_field(ral.control.op, data, flash_op.op);
+    data = data | get_csr_val_with_updated_field(ral.control.prog_sel, data, flash_op.prog_sel);
     data = data | get_csr_val_with_updated_field(ral.control.erase_sel, data, flash_op.erase_type);
     data = data | get_csr_val_with_updated_field(ral.control.partition_sel, data, partition_sel);
     data = data | get_csr_val_with_updated_field(ral.control.info_sel, data, info_sel);
@@ -315,14 +316,17 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
   endtask : flash_ctrl_read
 
   // Task to perform a direct Flash read at the specified location
+  // Used timeout is to match the longest waiting timeout possible for the host, which will happen
+  //  when the host is waiting for the controller to finish bank-erase
   virtual task do_direct_read(
-      input bit [TL_AW-1:0] addr, input bit [TL_DBW-1:0] mask = get_rand_contiguous_mask(),
+      input addr_t addr, input bit [TL_DBW-1:0] mask = get_rand_contiguous_mask(),
       input bit blocking = $urandom_range(0, 1), input bit check_rdata = 0,
-      input bit [TL_DW-1:0] exp_rdata = '0, input mubi4_t instr_type = MuBi4False,
-      output logic [TL_DW-1:0] rdata, input bit exp_err_rsp = 1'b0);
-    tl_access(.addr(addr), .write(1'b0), .data(rdata), .mask(mask), .blocking(blocking),
-              .check_exp_data(check_rdata), .exp_data(exp_rdata), .compare_mask(mask),
-              .instr_type(instr_type), .exp_err_rsp(exp_err_rsp),
+      input data_t exp_rdata = '0, input mubi4_t instr_type = MuBi4False,
+      output data_4s_t rdata, input bit exp_err_rsp = 1'b0);
+    tl_access(.addr(addr), .write(1'b0), .data(rdata),
+              .tl_access_timeout_ns(cfg.seq_cfg.erase_timeout_ns), .mask(mask),
+              .blocking(blocking), .check_exp_data(check_rdata), .exp_data(exp_rdata),
+              .compare_mask(mask), .instr_type(instr_type), .exp_err_rsp(exp_err_rsp),
               .tl_sequencer_h(p_sequencer.tl_sequencer_hs[cfg.flash_ral_name]));
   endtask : do_direct_read
 
@@ -336,7 +340,7 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
 
     // Local Signals
     bit               poll_fifo_status;
-    logic [TL_DW-1:0] exp_data[$];
+    data_q_t          exp_data;
     flash_op_t        flash_op;
 
     // Flash Operation Assignments
@@ -457,36 +461,57 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
   // Simple Model For The OTP Key Seeds
   virtual task otp_model();
 
-    `uvm_info(`gfn, "Starting OTP Model", UVM_LOW)
+    `uvm_info(`gfn, "Starting OTP Model ...", UVM_LOW)
+
+    // Initial Values
+    cfg.flash_ctrl_vif.otp_rsp.addr_ack   = 1'b0;
+    cfg.flash_ctrl_vif.otp_rsp.data_ack   = 1'b0;
+    cfg.flash_ctrl_vif.otp_rsp.seed_valid = 1'b0;
+    cfg.flash_ctrl_vif.otp_rsp.key        = '0;
+    cfg.flash_ctrl_vif.otp_rsp.rand_key   = '0;
+
+    // Note 'some values' appear in both branches of this fork, this is OK because the
+    // branches never run together by design.
+    // The order is always 'addr' followed by 'data'.
 
     fork
-      forever begin
+      forever begin  // addr
         @(posedge cfg.clk_rst_vif.rst_n);
         @(posedge cfg.flash_ctrl_vif.otp_req.addr_req);
-        otp_addr_key                          = {$urandom, $urandom, $urandom, $urandom};
-        otp_addr_rand_key                     = {$urandom, $urandom, $urandom, $urandom};
-        cfg.flash_ctrl_vif.otp_rsp.key        = otp_addr_key;
-        cfg.flash_ctrl_vif.otp_rsp.rand_key   = otp_addr_rand_key;
+        otp_addr_key = {$urandom, $urandom, $urandom, $urandom};
+        otp_addr_rand_key = {$urandom, $urandom, $urandom, $urandom};
+        `uvm_info(`gfn, $sformatf("OTP Addr Key Applied to DUT : otp_addr_key : %0x",
+          otp_addr_key), UVM_MEDIUM)
+        `uvm_info(`gfn, $sformatf("OTP Addr Rand Key Applied to DUT : otp_addr_rand_key : %0x",
+          otp_addr_rand_key), UVM_MEDIUM)
+        cfg.flash_ctrl_vif.otp_rsp.key = otp_addr_key;
+        cfg.flash_ctrl_vif.otp_rsp.rand_key = otp_addr_rand_key;
         cfg.flash_ctrl_vif.otp_rsp.seed_valid = 1'b1;
-        #1ns;
+        #1ns;  // Positive Hold
         cfg.flash_ctrl_vif.otp_rsp.addr_ack = 1'b1;
         @(negedge cfg.flash_ctrl_vif.otp_req.addr_req);
-        #1ns;
+        #1ns;  // Positive Hold
         cfg.flash_ctrl_vif.otp_rsp.addr_ack = 1'b0;
+        cfg.flash_ctrl_vif.otp_rsp.seed_valid = 1'b0;
       end
-      forever begin
+      forever begin  // data
         @(posedge cfg.clk_rst_vif.rst_n);
         @(posedge cfg.flash_ctrl_vif.otp_req.data_req);
-        otp_data_key                          = {$urandom, $urandom, $urandom, $urandom};
-        otp_data_rand_key                     = {$urandom, $urandom, $urandom, $urandom};
-        cfg.flash_ctrl_vif.otp_rsp.key        = otp_data_key;
-        cfg.flash_ctrl_vif.otp_rsp.rand_key   = otp_data_rand_key;
+        otp_data_key = {$urandom, $urandom, $urandom, $urandom};
+        otp_data_rand_key = {$urandom, $urandom, $urandom, $urandom};
+        cfg.flash_ctrl_vif.otp_rsp.key = otp_data_key;
+        cfg.flash_ctrl_vif.otp_rsp.rand_key = otp_data_rand_key;
+        `uvm_info(`gfn, $sformatf("OTP Data Key Applied to DUT : otp_data_key : %0x",
+          otp_data_key), UVM_MEDIUM)
+        `uvm_info(`gfn, $sformatf("OTP Data Rand Key Applied to DUT : otp_data_rand_key : %0x",
+          otp_data_rand_key), UVM_MEDIUM)
         cfg.flash_ctrl_vif.otp_rsp.seed_valid = 1'b1;
-        #1ns;
+        #1ns;  // Positive Hold
         cfg.flash_ctrl_vif.otp_rsp.data_ack = 1'b1;
         @(negedge cfg.flash_ctrl_vif.otp_req.data_req);
-        #1ns;
+        #1ns;  // Positive Hold
         cfg.flash_ctrl_vif.otp_rsp.data_ack = 1'b0;
+        cfg.flash_ctrl_vif.otp_rsp.seed_valid = 1'b0;
       end
     join_none
 
@@ -559,7 +584,7 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
 
     // Local Variables
     bit               poll_fifo_status;
-    logic [TL_DW-1:0] exp_data[$];
+    data_q_t          exp_data;
     flash_op_t        flash_op;
     data_q_t          flash_op_rdata;
     int               match_cnt;
@@ -699,9 +724,9 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
     int                      num;
     int                      num_full;
     int                      num_part;
-    logic [TL_DW-1:0]        fifo_data;
-    logic [TL_AW-1:0]        flash_addr;
-    logic [TL_DW-1:0]        exp_data[$];
+    data_4s_t                fifo_data;
+    addr_t                   flash_addr;
+    data_q_t                 exp_data;
     flash_op_t               flash_op_copy;
     data_q_t                 data_copy;
 
@@ -971,5 +996,46 @@ class flash_ctrl_base_vseq extends cip_base_vseq #(
       flash_op_p.addr = flash_op_p.addr + 64;  //64B was written, 16 words
     end
   endtask : controller_program_page
+
+  // Check Expected Alert for prog_type_err and prog_win_err
+  virtual task check_exp_alert_status(input bit exp_alert, input string alert_name,
+                                      input flash_op_t flash_op, input data_q_t flash_op_data);
+
+    // Local Variables
+    uvm_reg_data_t reg_data;
+
+    // Read Status Bits
+    case (alert_name)
+      "prog_type_err" : csr_rd_check(.ptr(ral.err_code.prog_type_err), .compare_value(exp_alert));
+      "prog_win_err"  : csr_rd_check(.ptr(ral.err_code.prog_win_err),  .compare_value(exp_alert));
+      "mp_err"        : csr_rd_check(.ptr(ral.err_code.mp_err),        .compare_value(exp_alert));
+      "op_err"        : csr_rd_check(.ptr(ral.err_code.op_err),        .compare_value(exp_alert));
+      default : `uvm_fatal(`gfn, "Unrecognized alert_name, FAIL")
+    endcase
+    csr_rd_check(.ptr(ral.op_status.err), .compare_value(exp_alert));
+
+    // For 'prog_type_err' and 'prog_win_err' check via backdoor if Pass,
+    // 'mp_err' is Backdoor checked directly within its own test.
+    if ((alert_name inside {"prog_type_err", "prog_win_err"}) && (exp_alert == 0)) begin
+      cfg.flash_mem_bkdr_read_check(flash_op, flash_op_data);
+    end
+
+    // Clear Status Bits
+    case (alert_name)
+      "prog_type_err" : reg_data = get_csr_val_with_updated_field(ral.err_code.prog_type_err,
+                                                                  reg_data, 1);
+      "prog_win_err"  : reg_data = get_csr_val_with_updated_field(ral.err_code.prog_win_err,
+                                                                  reg_data, 1);
+      "mp_err"        : reg_data = get_csr_val_with_updated_field(ral.err_code.mp_err,
+                                                                  reg_data, 1);
+      "op_err"        : reg_data = get_csr_val_with_updated_field(ral.err_code.op_err,
+                                                                  reg_data, 1);
+      default : `uvm_fatal(`gfn, "Unrecognized alert_name")
+    endcase
+    csr_wr(.ptr(ral.err_code), .value(reg_data));
+    reg_data = get_csr_val_with_updated_field(ral.op_status.err, reg_data, 0);
+    csr_wr(.ptr(ral.op_status), .value(reg_data));
+
+  endtask : check_exp_alert_status
 
 endclass : flash_ctrl_base_vseq

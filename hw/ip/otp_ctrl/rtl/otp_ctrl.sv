@@ -113,8 +113,8 @@ module otp_ctrl
   // Regfile //
   /////////////
 
-  // We have one CSR node and one functional TL-UL window.
-  logic [1:0] intg_error;
+  // We have one CSR node, one functional TL-UL window and a gate module for that window
+  logic [2:0] intg_error;
 
   tlul_pkg::tl_h2d_t tl_win_h2d;
   tlul_pkg::tl_d2h_t tl_win_d2h;
@@ -735,7 +735,8 @@ module otp_ctrl
     .tl_d2h_o(prim_tl_o),
     .tl_h2d_o(prim_tl_h2d_gated),
     .tl_d2h_i(prim_tl_d2h_gated),
-    .lc_en_i (lc_dft_en[0])
+    .lc_en_i (lc_dft_en[0]),
+    .err_o   (intg_error[2])
   );
 
   // Test-related GPIOs.
@@ -752,7 +753,6 @@ module otp_ctrl
     .Depth            ( OtpDepth            ),
     .SizeWidth        ( OtpSizeWidth        ),
     .PwrSeqWidth      ( OtpPwrSeqWidth      ),
-    .TlDepth          ( NumDebugWindowWords ),
     .TestCtrlWidth    ( OtpTestCtrlWidth    ),
     .TestStatusWidth  ( OtpTestStatusWidth  ),
     .TestVectWidth    ( OtpTestVectWidth    ),
@@ -814,7 +814,8 @@ module otp_ctrl
     .rready_i ( otp_rvalid         ),
     .rdata_o  ( otp_part_idx       ),
     .depth_o  (                    ),
-    .full_o   (                    )
+    .full_o   (                    ),
+    .err_o    (                    )
   );
 
   // Steer response back to the partition where this request originated.
@@ -1281,7 +1282,9 @@ module otp_ctrl
   assign otp_hw_cfg_o.valid = (part_init_done[HwCfgIdx]) ? lc_ctrl_pkg::On : lc_ctrl_pkg::Off;
   assign otp_hw_cfg_o.data = otp_hw_cfg_data_t'(part_buf_data[HwCfgOffset +: HwCfgSize]);
   // Root keys
-  assign otp_keymgr_key_o.valid = part_digest[Secret2Idx] != '0;
+  logic otp_keymgr_key_valid_d, otp_keymgr_key_valid_q; // need to latch valid
+  assign otp_keymgr_key_valid_d = part_digest[Secret2Idx] != '0;
+  assign otp_keymgr_key_o.valid = otp_keymgr_key_valid_q;
   assign otp_keymgr_key_o.key_share0 = (lc_seed_hw_rd_en == lc_ctrl_pkg::On) ?
                                        part_buf_data[CreatorRootKeyShare0Offset +:
                                                      CreatorRootKeyShare0Size] :
@@ -1292,6 +1295,22 @@ module otp_ctrl
                                                      CreatorRootKeyShare1Size] :
                                        PartInvDefault[CreatorRootKeyShare1Offset*8 +:
                                                       CreatorRootKeyShare1Size*8];
+  prim_flop #(
+    .Width(1)
+  ) u_keygmr_key_valid (
+    .clk_i,
+    .rst_ni,
+    .d_i (otp_keymgr_key_valid_d),
+    .q_o (otp_keymgr_key_valid_q)
+  );
+  // as key_share0, key_share1 are directly connected from digest and go
+  // through mux, Assertion is added to check the relationship between
+  // lc_seed_hw_rd_en and key_valid
+  `ASSERT(LcSeedHwRdEnStable_A,
+    $rose(otp_keymgr_key_valid_q) |=> $stable(lc_seed_hw_rd_en) [*1:$],
+    clk_i,
+    !rst_ni || (lc_escalate_en_i == lc_ctrl_pkg::On) // Disable assertion if esc is high
+  )
 
   // Scrambling Keys
   assign scrmbl_key_seed_valid = part_digest[Secret1Idx] != '0;
@@ -1422,6 +1441,8 @@ module otp_ctrl
       u_otp_ctrl_lci.u_prim_count, alert_tx_o[1])
   `ASSERT_PRIM_COUNT_ERROR_TRIGGER_ALERT(CntScrmblCheck_A,
       u_otp_ctrl_scrmbl.u_prim_count, alert_tx_o[1])
+  `ASSERT_PRIM_FSM_ERROR_TRIGGER_ALERT(TlLcGateFsm_A,
+      u_tlul_lc_gate.u_state_regs, alert_tx_o[1])
 
   // Alert assertions for double LFSR.
   `ASSERT_PRIM_DOUBLE_LFSR_ERROR_TRIGGER_ALERT(DoubleLfsrCheck_A,

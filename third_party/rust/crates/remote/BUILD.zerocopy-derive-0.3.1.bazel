@@ -20,7 +20,7 @@ load(
 package(default_visibility = [
     # Public for visibility by "@raze__crate__version//" targets.
     #
-    # Prefer access through "//third_party/cargo", which limits external
+    # Prefer access through "//third_party/rust/crates", which limits external
     # visibility to explicit Cargo.toml dependencies.
     "//visibility:public",
 ])
@@ -50,8 +50,8 @@ rust_proc_macro(
     version = "0.3.1",
     # buildifier: leave-alone
     deps = [
-        "@raze__proc_macro2__1_0_37//:proc_macro2",
-        "@raze__syn__1_0_91//:syn",
+        "@raze__proc_macro2__1_0_38//:proc_macro2",
+        "@raze__syn__1_0_92//:syn",
         "@raze__synstructure__0_12_6//:synstructure",
     ],
 )

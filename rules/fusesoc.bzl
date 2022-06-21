@@ -19,6 +19,8 @@ having been installed.  In the future, we will try to rework our
 dependencies so the FuseSoC rules can be sandboxed.
 """
 
+load("@bazel_skylib//rules:common_settings.bzl", "BuildSettingInfo")
+
 def _fusesoc_build_impl(ctx):
     dirname = "build.{}".format(ctx.label.name)
     out_dir = ctx.actions.declare_directory(dirname)
@@ -30,6 +32,12 @@ def _fusesoc_build_impl(ctx):
         outputs.extend(deps)
         groups[group] = depset(deps)
 
+    if ctx.attr.verilator_options:
+        verilator_options = ctx.attr.verilator_options[BuildSettingInfo].value
+        flags.append("--verilator_options={}".format(" ".join(verilator_options)))
+
+    # Note: the `fileset_top` flag used above is specific to the OpenTitan
+    # project to select the correct RTL fileset.
     ctx.actions.run(
         mnemonic = "FuseSoC",
         outputs = outputs,
@@ -73,5 +81,6 @@ fusesoc_build = rule(
             allow_empty = True,
             doc = "Mapping of group name to lists of files in that named group",
         ),
+        "verilator_options": attr.label(),
     },
 )

@@ -282,15 +282,6 @@
       tests: []
     }
     {
-      name: chip_usb_ls_tx_rx
-      desc: '''Verify the transmission of single-ended data over the USB at low speed.
-
-            - Similar to `chip_usb_fs_df_tx_rx`, except testing USB at Low-Speed (1.5 Mbps).
-            '''
-      milestone: V2
-      tests: []
-    }
-    {
       name: chip_sw_usb_vbus
       desc: '''Verify that the USB device can detect the presence of VBUS from the USB host.
 
@@ -411,9 +402,15 @@
             Verify pinmux can select the life_cycle, RISC-V, and DFT taps after reset.
             Verify that in TEST_UNLOCKED* and RMA states, pinmux can switch between the three TAPs
             without issuing reset.
+            Verify in PROD state, only the LC tap can be selected.
+            Verify in DEV state, only the LC tap and RISC-V taps can be selected.
+            Verify DFT test mode straps are sampled and output to AST via
+            top_earlgrey.dft_strap_test_o in TEST_UNLOCKED* and RMA states.
+            Verify top_earlgrey.dft_strap_test_o is always 0 in the states other than TEST_UNLOCKED*
+            and RMA, regardless of the value on DFT SW straps.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_tap_straps_dev", "chip_tap_straps_prod", "chip_tap_straps_rma"]
     }
 
     // PADCTRL tests:
@@ -530,14 +527,8 @@
     }
     {
       name: chip_rv_dm_perform_debug
-      desc: '''Verify that Ibex enters debug mode when triggered through JTAG
-
-            - While Ibex is executing, trigger a debug request by programming `dmcontrol.haltreq`
-              via JTAG.
-            - Ibex steps into interactive debug to store a value in SRAM.
-            - Program the program buffer through JTAG with code to store a value in SRAM and return
-              back to normal program execution using dret.
-            - After Ibex jumps back to the program execution, check the stored value in the SRAM.
+      desc: '''
+            - X-ref'ed with mask_rom_rv_dm_perform_debug from mask rom testplan
             '''
       milestone: V2
       tests: []
@@ -678,7 +669,7 @@
       desc: '''Verify that the LC escalation signal disables the AON timer wdog.
 
             - Program the AON timer wdog to 'bark' after some time and enable the bark interrupt.
-            - Stop the escalation process and fail the test in the interrupt handler in case the
+            - Start the escalation process and fail the test in the interrupt handler in case the
               bark interrupt is fired.
             - Program the alert handler to escalate on alerts upto phase 2 (i.e. reset) but the
               phase 1 (i.e. wipe secrets) should occur and last during the time the wdog is
@@ -759,7 +750,7 @@
             interrupt that is seen is the SW interrupt.
             '''
       milestone: V2
-      tests: [""]
+      tests: ["chip_sw_plic_sw_irq"]
     }
     {
       name: chip_sw_plic_nmi_irq
@@ -769,7 +760,7 @@
             the watchdog bark), then map each test to this testpoint.
             '''
       milestone: V2
-      tests: [""]
+      tests: []
     }
 
     // CLKMGR tests:
@@ -777,12 +768,13 @@
       name: chip_sw_clkmgr_idle_trans
       desc: '''Verify the ability to turn off the transactional clock via SW.
 
-            Ensure that the clock to transactional units can be turned off regardless of any
-            activity in the transactional IP.  Verify it is off via spinwait in hints_status CSR.
+            Ensure that the clock to transactional units will be turned off after any activity
+            completes in the transactional IP.  Verify it is off via spinwait in hints_status CSR.
             Verify that turning off this clock does not affect the other derived clocks.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_aes_idle",
+              "chip_sw_hmac_idle"]
     }
     {
       name: chip_sw_clkmgr_off_trans
@@ -797,7 +789,10 @@
             check).
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_clkmgr_off_aes_trans",
+              "chip_sw_clkmgr_off_hmac_trans",
+              "chip_sw_clkmgr_off_kmac_trans",
+              "chip_sw_clkmgr_off_otbn_trans"]
     }
     {
       name: chip_sw_clkmgr_off_peri
@@ -856,9 +851,52 @@
             Enable clock jitter setting the clkmgr `jitter_enable` CSR high. This causes the
             jitter_o clkmgr output to toggle. Verify this output is connected to AST's
             clk_src_sys_jen_i input using formal.
+
+            X-ref with various specific jitter enable tests.
             '''
       milestone: V2
-      tests: ["chip_sw_clkmgr_jitter"]
+      tests: ["chip_sw_clkmgr_jitter",
+              "chip_sw_flash_ctrl_ops_jitter_en",
+              "chip_sw_flash_ctrl_access_jitter_en",
+              "chip_sw_otbn_ecdsa_op_irq_jitter_en",
+              "chip_sw_aes_enc_jitter_en",
+              "chip_sw_hmac_enc_jitter_en",
+              "chip_sw_keymgr_key_derivation_jitter_en",
+              "chip_sw_kmac_mode_kmac_jitter_en",
+              "chip_sw_sram_ctrl_main_scrambled_access_jitter_en"]
+    }
+    {
+      name: chip_sw_clkmgr_deep_sleep_frequency
+      desc: '''Verify the frequency measurement through deep sleep.
+
+            Enable clock cycle counts. Put the chip in deep sleep. Upon wakeup reset the
+            clock measurements should be off, and the recoverable fault status should be
+            all clear.
+            '''
+      milestone: V2
+      tests: []
+    }
+    {
+      name: chip_sw_clkmgr_sleep_frequency
+      desc: '''Verify the frequency measurement through shallow sleep.
+
+            Enable clock cycle counts. Put the chip in shallow sleep with pwrmgr's CONTROL CSR
+            randomly enabling clocks. Upon wakeup interrupt the clock measurements should be on,
+            and the recoverable fault status may have faults for only the disabled clocks.
+            '''
+      milestone: V2
+      tests: []
+    }
+    {
+      name: chip_sw_clkmgr_escalation_reset
+      desc: '''Verify the clock manager resets to a clean state after an internal fault
+               (measurement error timeout) causes the system to escalate to reset.
+
+               Upon alert escalation reset, the internal status should be clear and the
+               clkmgr should not attempt to send out more alerts.
+            '''
+      milestone: V2
+      tests: []
     }
 
     // PWRMGR tests:
@@ -873,7 +911,7 @@
       tests: ["chip_sw_pwrmgr_full_aon_reset"]
     }
     {
-      name: chip_sw_pwrmgr_sleep_all_wake_ups
+      name: chip_sw_pwrmgr_normal_sleep_all_wake_ups
       desc: '''Verify that the chip can go into normal sleep state and be woken up by ALL wake up
             sources.
 
@@ -885,7 +923,7 @@
             wakeup.
             '''
       milestone: V2
-      tests: ["chip_sw_pwrmgr_smoketest"]
+      tests: ["chip_sw_pwrmgr_normal_sleep_all_wake_ups"]
     }
     {
       name: chip_sw_pwrmgr_sleep_all_reset_reqs
@@ -898,7 +936,7 @@
             rstmgr's `reset_info` indicates the expected reset.
             '''
       milestone: V2
-      tests: ["chip_aon_timer_wdog_bite_reset"]
+      tests: ["chip_sw_aon_timer_wdog_bite_reset"]
     }
     {
       name: chip_sw_pwrmgr_deep_sleep_all_wake_ups
@@ -910,31 +948,44 @@
             chip_pwrmgr_sleep_all_wake_ups, except `control.main_pd_n` is set to 0.
             '''
       milestone: V2
-      tests: ["chip_sw_pwrmgr_smoketest",
-              "chip_sw_pwrmgr_usbdev_wakeup"]
+      tests: ["chip_sw_pwrmgr_deep_sleep_all_wake_ups"]
     }
     {
       name: chip_sw_pwrmgr_deep_sleep_all_reset_reqs
       desc: '''Verify that the chip can go into deep sleep state and be reset up by ALL reset req
             sources.
 
-            This verifies ALL reset sources. This also verifies that the pwrmgr sequencing is
-            working correctly as expected. X-ref'ed with all individual IP tests. Similar to
-            chip_pwrmgr_sleep_all_reset_reqs, except `control.main_pd_n` is set to 0.
+            This verifies ALL reset sources.
+            - 7 resets are generated randomly with deep sleeps
+            - POR (HW PAD) reset, SW POR, sysrst, wdog timer reset, esc rst, SW req
+            - esc reset is followd by normal mode because it does not work with sleep mode
             '''
       milestone: V2
-      tests: ["chip_aon_timer_wdog_bite_reset"]
+      tests: ["chip_sw_pwrmgr_deep_sleep_all_reset_reqs"]
     }
     {
-      name: chip_sw_pwrmgr_all_reset_reqs
-      desc: '''Verify that the chip can be reset by ALL available reset sources.
+      name: chip_sw_pwrmgr_normal_sleep_all_reset_reqs
+      desc: '''Verify that the chip can go into normal sleep state and be reset up by ALL reset req
+            sources.
 
-            This verifies ALL reset sources. This also verifies that the pwrmgr sequencing is
+            This verifies ALL reset sources.
+            - 7 resets are generated randomly with normal sleeps
+            - POR (HW PAD) reset, SW POR, sysrst, wdog timer reset, esc rst, SW req
+            - esc reset is followed by normal mode and cleared by reset because it does not work with sleep mode
+            '''
+      milestone: V2
+      tests: ["chip_sw_pwrmgr_normal_sleep_all_reset_reqs"]
+    }
+    {
+      name: chip_sw_pwrmgr_wdog_reset
+      desc: '''Verify that the chip can be reset by watchdog timer reset source.
+
+            This verifies watchdog timer reset source. This also verifies that the pwrmgr sequencing is
             working correctly as expected. X-ref'ed with all individual IP tests. Similar to
             chip_pwrmgr_sleep_all_reset_reqs, except the chip is not put in low power mode.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_pwrmgr_wdog_reset"]
     }
     {
       name: chip_sw_pwrmgr_aon_power_glitch_reset
@@ -960,25 +1011,65 @@
       tests: ["chip_sw_pwrmgr_main_power_glitch_reset"]
     }
     {
-      name: chip_sw_pwrmgr_sleep_power_glitch_reset
+      name: chip_sw_pwrmgr_deep_sleep_power_glitch_reset
       desc: '''Verify the effect of a glitch in main power rail in deep sleep.
 
-            The vcmain_supp_i AST input is forced to drop after putting the chip to sleep. This
+            The vcmain_supp_i AST input is forced to drop after putting the chip in deep sleep. This
             triggers a MainPwr reset request, which is checked reading the reset_info CSR when the
             test restarts and the POR bit is not set.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_pwrmgr_deep_sleep_power_glitch_reset"]
+    }
+    {
+      name: chip_sw_pwrmgr_sleep_power_glitch_reset
+      desc: '''Verify the effect of a glitch in main power rail in shallow sleep.
+
+            The vcmain_supp_i AST input is forced to drop after putting the chip in shallow sleep. This
+            triggers a MainPwr reset request, which is checked reading the reset_info CSR when the
+            test restarts and the POR bit is not set.
+            '''
+      milestone: V2
+      tests: ["chip_sw_pwrmgr_sleep_power_glitch_reset"]
+    }
+    {
+      name: chip_sw_pwrmgr_random_sleep_all_reset_reqs
+      desc: '''Verify that this chip can be reset by All available reset sources.
+
+            - 12 resets are generated randomly with normal/deep sleeps
+            - POR (HW PAD) reset, SW POR, sysrst, wdog timer reset, esc rst, SW req
+            - esc reset is followd by normal mode because it does not work with sleep mode
+            '''
+      milestone: V2
+      tests: ["chip_sw_pwrmgr_random_sleep_all_reset_reqs"]
+    }
+    {
+      name: chip_sw_pwrmgr_sysrst_ctrl_reset
+      desc: '''Verify the effect of a sysrst_ctrl output in main power rail.
+
+            - Read the reset cause register in rstmgr to confirm that the SW is in the POR reset
+              phase.
+            - After sysrst reset is generated by forcing, read the reset cause register in rstmgr to confirm that the SW is now in
+              the sysrst reset phase.
+            - Generate sysrst by driving input PAD.
+            - After reset, read the reset cause register in rstmgr to confirm that the SW is now in
+              the sysrst reset phase.
+            - Program the AON timer wdog to 'bark' after some time.
+            - Let the bark escalate to bite, which should result in a reset request.
+            - After reset, read the reset cause register in rstmgr to confirm that the SW is now in
+              the wdog reset phase.
+            - Program the AON timer wdog to 'bark' after some time.
+            '''
+      milestone: V2
+      tests: ["chip_sw_pwrmgr_sysrst_ctrl_reset"]
     }
     {
       name: chip_sw_pwrmgr_b2b_sleep_reset_req
       desc: '''Verify that the pwrmgr sequences sleep_req and reset req coming in almost at the same
-            time, one after the other.
-
-            Verified at IP level.
+            time, one after the other. Use POR_N PAD to trigger reset.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_pwrmgr_b2b_sleep_reset_req"]
     }
     {
       name: chip_sw_pwrmgr_debug_sleep
@@ -999,6 +1090,17 @@
       milestone: V2
       tests: []
     }
+    {
+      name: chip_sw_pwrmgr_escalation_reset
+      desc: '''Verify the power manager resets to a clean state after an internal fault
+               causes the system to escalate to reset.
+
+               Upon alert escalation reset, the internal status should be clear and the
+               pwrmgr should not attempt to send out more alerts.
+            '''
+      milestone: V2
+      tests: []
+    }
 
     // RSTMGR tests:
     {
@@ -1013,8 +1115,8 @@
 
             This should also check the reset's destination IP to make sure some reset side-effect
             is present. Setting some `intr_enable` CSR bit when the test starts and checking it
-            after reset seems suitable. The `spi_host` and `usbdev` IPs receive multiple resets
-            so they will need special consideration.
+            after reset seems suitable. The `spi_host` IPs receive multiple resets so they will
+            need special consideration.
             TODO(maturana) Add specific tests once they are developed.
             '''
       milestone: V2
@@ -1030,8 +1132,8 @@
 
             This should also check the reset's destination IP to make sure some reset side-effect
             is present. Setting some `intr_enable` CSR bit when the test starts and checking it
-            after reset seems suitable. The `spi_host` and `usbdev` IPs receive multiple resets
-            so they will need special consideration.
+            after reset seems suitable. The `spi_host` IPs receive multiple resets so they will
+            need special consideration.
             TODO(maturana) Add specific tests once they are developed.
             '''
       milestone: V2
@@ -1047,7 +1149,7 @@
             Refer to `chip_*sys_rstmgr_reset_info`.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_rstmgr_cpu_info"]
     }
     {
       name: chip_sw_rstmgr_sw_req_reset
@@ -1083,13 +1185,23 @@
             - Pulse the reset to the peripheral via software.
             - Read the resister after reset and verify it returns the reset value.
             - Repeat these steps for each of these software resettable peripherals:
-              `spi_device`, `spi_host0`, `spi_host1`, `usb`, `usbif`, `i2c0`, `i2c1`, `i2c2`.
+              `spi_device`, `spi_host0`, `spi_host1`, `usb`, `i2c0`, `i2c1`, `i2c2`.
 
-            Notice the two `spi_host` and `usbdev` IPs receive two different resets each,
-            `spi_host*` and `usb` and `usbif` respectively.
+            Notice the two `spi_host` IPs receive two different resets, `spi_host*`.
             '''
       milestone: V2
       tests: ["chip_sw_rstmgr_sw_rst"]
+    }
+    {
+      name: chip_sw_rstmgr_escalation_reset
+      desc: '''Verify the reset manager resets to a clean state after an internal fault
+               causes the system to escalate to reset.
+
+               Upon alert escalation reset, the internal status should be clear and the
+               rstmgr should not attempt to send out more alerts.
+            '''
+      milestone: V2
+      tests: []
     }
 
     // ALERT_HANDLER (pre-verified IP) integration tests:
@@ -1126,7 +1238,7 @@
             X-ref'ed with the automated PLIC test.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_plic_all_irqs"]
     }
     {
       name: chip_sw_alert_handler_entropy
@@ -1166,8 +1278,10 @@
       name: chip_sw_alert_handler_lpg
       desc: '''Verify alert's low_power_group(lpg).
 
-            Choose an always-on block and send alerts during deep sleep mode, check the
-            alert_senders can recover after system comes out of the deep sleep mode.
+            Choose an always-on block and send alerts during deep sleep and normal sleep mode,
+            check the alert_senders can recover after system comes out of both sleep modes.
+            Repeat the above sequence for multiple rounds with randomly chosen deep or normal sleep
+            mode for each round.
             '''
       milestone: V2
       tests: []
@@ -1216,7 +1330,7 @@
             correctness.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_tap_straps_dev", "chip_tap_straps_prod", "chip_tap_straps_rma"]
     }
     {
       name: chip_sw_lc_ctrl_jtag_trst
@@ -1248,17 +1362,21 @@
             - Ensure that no interrupts or alerts are triggered.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_lc_ctrl_transition"]
     }
     {
       name: chip_sw_lc_ctrl_transitions
-      desc: '''Verify the LC ctrl can transition from one state to another valid state.
+      desc: '''Verify the LC ctrl can transit from one state to another valid state with the
+            correct tokens.
 
-            - Initiate an LC ctrl state transition.
+            - Preload OTP image with a LC state and required tokens to transfer to next state.
+            - Initiate an LC ctrl state transition via SW if CPU is enabled, or via JTAG interface
+              if CPU is disable.
             - Ensure that the LC program request is received by the OTP ctrl.
             - Verify the updated data output from OTP ctrl to LC ctrl is correct.
             - Ensure that there is no background or otp_init error.
             - Verify that the LC ctrl has transitioned to the programmed state after a reboot.
+            Re-randomize the lc_transition tokens and repeat the sequence above.
 
             X-ref'ed chip_sw_otp_ctrl_program.
             '''
@@ -1280,8 +1398,11 @@
     }
     {
       name: chip_sw_lc_ctrl_kmac_reset
-      desc: '''Verify the effect of putting the KMAC logic in reset.
+      desc: '''Verify the effect of putting the KMAC logic in reset during LC state transition.
 
+            - For a lc state transition, force a reset to KMAC when KMAC is processing lc
+              transition tokens.
+            - Verify that LC won't transfer to next state upon KMAC reset glitch.
             '''
       milestone: V2
       tests: []
@@ -1395,7 +1516,7 @@
       tests: []
     }
     {
-      name: chip_sw_sysrst_ctrl_sleep_gsc_wakeup
+      name: chip_sw_sysrst_ctrl_sleep_wakeup
       desc: '''Verify the SYSRST ctrl can wake up the chip from deep sleep.
 
             - Read the reset cause register in rstmgr to confirm we are in POR reset phase.
@@ -1403,64 +1524,64 @@
               a low power wakeup signal for the pwrmgr.
             - Program the associated detection timer.
             - Program the detection outcome CSR's (com_out_ctl) interrupt bit to 1.
-            - Program the pwrmgr to put the chip in deep sleep state and wake up on GSC wake up
+            - Program the pwrmgr to put the chip in deep sleep state and wake up on chip wake up
               event.
             - Issue a WFI to bring the chip in low power state.
             - After the chip has entered low power mode, set the SYSRST ctrl inputs at the chip IOs
               to the programmed combination for the duration of the detection timer.
             - Read the reset cause register to confirm wake up from low power exit phase.
-            - Read the pwrmgr wake up status register to confirm GSC wake up.
+            - Read the pwrmgr wake up status register to confirm chip wake up.
             - Read the pin input value and the combo_intr_status CSRs to verify the correct
               combination on inputs woke up the chip from sleep.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_sysrst_ctrl_reset"]
     }
     {
-      name: chip_sw_sysrst_ctrl_gsc_reset
+      name: chip_sw_sysrst_ctrl_reset
       desc: '''Verify the SYSRST ctrl can reset the chip from normal state.
 
             - Read the reset cause register in rstmgr to confirm we are in POR reset phase.
             - Program one of the com_sel_ctl_* CSRs to choose a set of inputs to be detected as
-              the GSC reset signal.
+              the chip reset signal.
             - Program the associated detection timer.
-            - Program the detection outcome CSR's (com_out_ctl) GSC reset bit to 1.
+            - Program the detection outcome CSR's (com_out_ctl) chip reset bit to 1.
             - After some time, set the SYSRST ctrl inputs at the chip IOs to the programmed
               combination for the duration of the detection timer.
-            - The pwrmgr will power cycle the chip once it receives the GSC reset input.
+            - The pwrmgr will power cycle the chip once it receives the chip reset input.
             - Check that ec_rst_l and flash_wp_l (on pads IOR8 and IOR9) are asserted right after
               the pwrmgr has power cycled the system.
             - Read the reset cause register after boot up to confirm peripheral reset phase.
-            - Read the pwrmgr reset status register to confirm GSC reset.
+            - Read the pwrmgr reset status register to confirm chip reset.
             - Read the com_sel_ctl_* CSR in SYSRST ctrl we programmed earlier - it should have been
               reset.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_sysrst_ctrl_reset"]
     }
     {
-      name: chip_sw_sysrst_ctrl_sleep_gsc_reset
+      name: chip_sw_sysrst_ctrl_sleep_reset
       desc: '''Verify the SYSRST ctrl can reset the chip from deep sleep.
 
             - Read the reset cause register in rstmgr to confirm we are in POR reset phase.
             - Program one of the com_sel_ctl_* CSRs to choose a set of inputs to be detected as
-              the GSC reset signal.
+              the chip reset signal.
             - Program the associated detection timer.
-            - Program the detection outcome CSR's (com_out_ctl) GSC reset bit to 1.
-            - Program the pwrmgr to put the chip in deep sleep state and allow it to be reset by GSC
-              reset bit.
+            - Program the detection outcome CSR's (com_out_ctl) chip reset bit to 1.
+            - Program the pwrmgr to put the chip in deep sleep state and allow it to be reset by the
+              chip reset bit.
             - Issue a WFI to bring the chip in low power state.
             - After the chip has entered low power mode, set the SYSRST ctrl inputs at the chip IOs
               to the programmed combination for the duration of the detection timer.
             - The pwrmgr will power cycle the chip from the deep sleep state once it receives the
-              GSC reset input.
+              chip reset input.
             - Read the reset cause register after boot up to confirm peripheral reset phase.
-            - Read the pwrmgr reset status register to confirm GSC reset.
+            - Read the pwrmgr reset status register to confirm chip reset.
             - Read the com_sel_ctl_* CSR in SYSRST ctrl we programmed earlier - it should have been
               reset.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_sysrst_ctrl_reset"]
     }
     {
       name: chip_sw_sysrst_ctrl_ec_rst_l
@@ -1546,7 +1667,7 @@
             - Repeat for both ADC channels.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_adc_ctrl_sleep_debug_cable_wakeup"]
     }
 
     ///////////////////////////////////////////////////////
@@ -1564,7 +1685,8 @@
             register. Check the digest registers for correctness against the expected digest value.
             '''
       milestone: V2
-      tests: ["chip_sw_aes_enc"]
+      tests: ["chip_sw_aes_enc",
+              "chip_sw_aes_enc_jitter_en"]
     }
     {
       name: chip_sw_aes_entropy
@@ -1579,27 +1701,24 @@
             - Write the KEY_IV_DATA_IN_CLEAR and DATA_OUT_CLEAR trigger bits to 1 and wait for it to
               complete by polling the status idle bit.
             - Read back the data out CSRs - they should all read garbage values.
-            - Assertion check verifies that the internal states (data_in, key share and IV are also
-              garbage, i.e. different from the originally written values.
-            - Assertion checks proves that all interfaces are connected across AST RNG, ES, CSRNG,
-              EDN and AES.
-            - Predict the generated entropy bits and check against the observed for correctness.
+            - Assertion check verifies that the IV are also garbage, i.e. different from the originally
+              written values.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_aes_entropy"]
     }
     {
       name: chip_sw_aes_idle
       desc: '''Verify AES idle signaling to clkmgr.
 
             - Write the AES clk hint to 0 within clkmgr to indicate AES clk can be gated and
-              verify that the AES clk hint status within clkmgr reads 0 (AES is idle).
+              verify that the AES clk hint status within clkmgr reads 0 (AES is disabled).
             - Write the AES clk hint to 1 within clkmgr to indicate AES clk can be enabled.
             - Initiate an AES operation with a known key, plain text and digest, write AES clk
               hint to 0 and verify that the AES clk hint status within clkmgr now reads 1 (AES
-              is not idle), before the AES operation is complete.
+              is enabled), before the AES operation is complete.
             - After the AES operation is complete verify that the AES clk hint status within
-              clkmgr now reads 0 again (AES is idle).
+              clkmgr now reads 0 again (AES is disabled).
             - Write the AES clk hint to 1, read and check the AES output for correctness.
             '''
       milestone: V2
@@ -1625,20 +1744,22 @@
             the HMAC done and FIFO empty interrupts as a part of this test.
             '''
       milestone: V2
-      tests: ["chip_sw_hmac_enc_irq", "chip_sw_hmac_enc"]
+      tests: ["chip_sw_hmac_enc_irq", "chip_sw_hmac_enc",
+              "chip_sw_hmac_enc_jitter_en"]
     }
     {
       name: chip_sw_hmac_idle
       desc: '''Verify the HMAC clk idle signal to clkmgr.
 
-            - Write the HMAC clk hint to 1 within clkmgr to indicate HMAC clk is ready to be gated.
-              Verify that the HMAC clk hint status within clkmgr reads 0 (HMAC is idle).
+            - Write the HMAC clk hint to 0 within clkmgr to indicate HMAC clk can be gated and
+              verify that the HMAC clk hint status within clkmgr reads 0 (HMAC is disabled).
+            - Write the HMAC clk hint to 1 within clkmgr to indicate HMAC clk can be enabled.
+              Verify that the HMAC clk hint status within clkmgr reads 1 (HMAC is enabled).
             - Initiate an HMAC operation with a known key, plain text and digest.
-              Verify that the HMAC clk hint status within clkmgr now reads 1 (HMAC is not idle),
-              before the HMAC operation is complete.
+              Write HMAC clock hint to 0 and verify the HMAC clk hint status within clkmgr reads 1
+              (HMAC is enabled), before the HMAC operation is complete.
             - After the HMAC operation is complete, verify the digest for correctness.
-              Verify that the HMAC clk hint status within clkmgr now reads 0 again (HMAC is idle),
-              after the HMAC operation is complete.
+              Verify that the HMAC clk hint status within clkmgr now reads 0 again (HMAC is disabled).
             '''
       milestone: V2
       tests: []
@@ -1653,7 +1774,8 @@
             the NIST vectors). SW validates the reception of kmac done and fifo empty interrupts.
             '''
       milestone: V2
-      tests: ["chip_sw_kmac_mode_cshake", "chip_sw_kmac_mode_kmac"]
+      tests: ["chip_sw_kmac_mode_cshake", "chip_sw_kmac_mode_kmac",
+              "chip_sw_kmac_mode_kmac_jitter_en"]
     }
     {
       name: chip_sw_kmac_app_keymgr
@@ -1725,13 +1847,15 @@
       name: chip_sw_kmac_idle
       desc: '''Verify the KMAC idle signaling to clkmgr.
 
-            - Program the KMAC clk hint within clkmgr to indicate KMAC clk is ready to be gated.
-              Verify that the KMAC clk enabled status within clkmgr reads disabled (KMAC is idle).
+            - Write the KMAC clk hint to 0 within clkmgr to indicate KMAC clk can be gated and
+              verify that the KMAC clk hint status within clkmgr reads 0 (KMAC is disabled).
+            - Write the KMAC clk hint to 1 within clkmgr to indicate KMAC clk can be enabled.
+              Verify that the KMAC clk hint status within clkmgr reads 1 (KMAC is enabled).
             - Initiate a KMAC operation with a known key, plain text and digest.
-              Verify that when enabling the KMAC clk hint after the operation has started but is not
-              yet complete, the clk enabled status in clkmgr stays enabled (KMAC is not idle).
+              Write KMAC clock hint to 0 and verify the KMAC clk hint status within clkmgr reads 1
+              (KMAC is enabled), before the KMAC operation is complete.
             - After the KMAC operation is complete, verify the digest for correctness.
-              Verify that the KMAC clk enabled status reads as disabled (KMAC is idle).
+              Verify that the KMAC clk hint status within clkmgr now reads 0 again (KMAC is disabled).
             '''
       milestone: V2
       tests: ["chip_sw_kmac_idle"]
@@ -1948,7 +2072,8 @@
               pre-computed using a reference model.
             '''
       milestone: V2
-      tests: ["chip_sw_otbn_ecdsa_op_irq"]
+      tests: ["chip_sw_otbn_ecdsa_op_irq",
+              "chip_sw_otbn_ecdsa_op_irq_jitter_en"]
     }
     {
       name: chip_sw_otbn_rnd_entropy
@@ -2062,7 +2187,8 @@
             '''
       milestone: V2
       tests: ["chip_sw_sram_ctrl_ret_scrambled_access",
-              "chip_sw_sram_ctrl_main_scrambled_access"]
+              "chip_sw_sram_ctrl_main_scrambled_access",
+              "chip_sw_sram_ctrl_main_scrambled_access_jitter_en"]
     }
     {
       name: chip_sw_sleep_sram_ret_contents
@@ -2088,9 +2214,9 @@
 
             - For both, main and the retention SRAM in each of these 8 scenarios:
               - Load instruction data into the SRAMs.
-              - If the instruction execution is enabled, verfy that the CPU can fetch and execute
+              - If the instruction execution is enabled, verify that the CPU can fetch and execute
                 the instruction from the SRAM correctly.
-              - If the instruction execution is not enabled, verfy that the SRAM throws an error
+              - If the instruction execution is not enabled, verify that the SRAM throws an error
                 response via an exception handler.
 
             The following table indicates in which of these scenarios should the instruction
@@ -2138,7 +2264,7 @@
             - Ensure that no interrupts or alerts are triggered.
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_lc_ctrl_transition"]
     }
     {
       name: chip_sw_otp_ctrl_keys
@@ -2224,7 +2350,8 @@
             - `lc_check_byp_en_i`: verify that the background check during LC ctrl state
               programming passes when enabled.
 
-            `X-ref'ed with chip_otp_ctrl_program.
+            X-ref'ed with chip_lc_ctrl_broadcast test, which verifies the connectivity of the LC
+            decoded outputs to other IPs.
             '''
       milestone: V2
       tests: []
@@ -2286,7 +2413,8 @@
             Nothing extra to do here - most SW based tests fetch code from flash.
             '''
       milestone: V2
-      tests: ["chip_sw_flash_ctrl_access"]
+      tests: ["chip_sw_flash_ctrl_access",
+              "chip_sw_flash_ctrl_access_jitter_en"]
     }
     {
       name: chip_sw_flash_ctrl_ops
@@ -2297,7 +2425,7 @@
             prog empty, prog level, rd full, rd level and op done interrupts.
             '''
       milestone: V2
-      tests: ["chip_sw_flash_ctrl_ops"]
+      tests: ["chip_sw_flash_ctrl_ops", "chip_sw_flash_ctrl_ops_jitter_en"]
     }
     {
       name: chip_sw_flash_rma_unlocked
@@ -2510,7 +2638,7 @@
 
             '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_ast_clk_outputs"]
     }
     {
       name: chip_sw_ast_clk_rst_inputs
@@ -2546,7 +2674,7 @@
              X-ref'ed with `chip_sensor_ctrl_ast_alerts`.
              '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_sensor_ctrl_alert"]
     }
 
     // SENSOR_CTRL tests:
@@ -2562,16 +2690,19 @@
                as either recoverable or fatal.
              '''
       milestone: V2
-      tests: ["chip_sw_pwrmgr_sleep_sensor_ctrl_alert_wakeup"]
+      tests: ["chip_sw_pwrmgr_sleep_sensor_ctrl_alert_wakeup",
+              "chip_sw_sensor_ctrl_alert"]
     }
     {
       name: chip_sw_sensor_ctrl_ast_status
       desc: '''Verify the io power ok status from AST.
 
-             Details TBD.
-             '''
+               Check that when the IO POK status changes, an interrupt is triggered
+               from sensor_ctrl.  After triggering, the IO status can be read
+               from a sensor_ctrl register.
+            '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_sensor_ctrl_status"]
     }
     {
       name: chip_sw_pwrmgr_sleep_sensor_ctrl_alert_wakeup
@@ -2732,12 +2863,21 @@
     }
     {
       name: chip_sw_lc_walkthrough
-      desc: '''Walk through the life cycle stages reseting the chip each time.
+      desc: '''Walk through the life cycle stages from RAW state and reseting the chip each time.
 
+             - Pre-load OTP image with RAW lc_state.
+             - Initiate the LC transition to one of the test unlock state.
+             - Program test_unlock_token, test_exit_token, rma_unlock_token into OTP partitions.
+             - Move forward to next valid LC states via JTAG interface or SW interface if CPU is
+               enabled.
              Verify that the features that should indeed be disabled are indeed disabled.
              '''
       milestone: V2
-      tests: []
+      tests: ["chip_sw_lc_walkthrough_dev",
+              "chip_sw_lc_walkthrough_prod",
+              "chip_sw_lc_walkthrough_prodend",
+              "chip_sw_lc_walkthrough_rma",
+              "chip_sw_lc_walkthrough_testunlocks"]
     }
     {
       name: chip_sw_device_ownership

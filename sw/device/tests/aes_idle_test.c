@@ -80,8 +80,10 @@ bool test_main(void) {
 
   initialize_clkmgr();
 
+#if !OT_IS_ENGLISH_BREAKFAST
   // First of all, we need to get the entropy complex up and running.
   entropy_testutils_boot_mode_init();
+#endif
 
   // Initialise AES.
   CHECK_DIF_OK(
@@ -97,20 +99,22 @@ bool test_main(void) {
 
   // "Convert" key share byte arrays to `dif_aes_key_share_t`.
   dif_aes_key_share_t key;
-  memcpy(key.share0, key_share0, ARRAYSIZE(kKey));
-  memcpy(key.share1, kKeyShare1, ARRAYSIZE(kKey));
+  memcpy(key.share0, key_share0, sizeof(kKey));
+  memcpy(key.share1, kKeyShare1, sizeof(kKey));
 
   // Setup ECB encryption transaction.
   dif_aes_transaction_t transaction = {
       .operation = kDifAesOperationEncrypt,
       .mode = kDifAesModeEcb,
       .key_len = kDifAesKey256,
-      .manual_operation = kDifAesManualOperationAuto,
+      .manual_operation = kDifAesManualOperationManual,
+      .masking = kDifAesMaskingInternalPrng,
+      .mask_reseeding = kDifAesReseedPerBlock,
   };
 
-  // Write the AES clk hint to 0 within clkmgr to indicate AES clk can be
-  // gated and verify that the AES clk hint status within clkmgr reads 0 (AES
-  // is idle).
+  // With the AES unit idle, write the AES clk hint to 0 within clkmgr to
+  // indicate AES clk can be gated and verify that the AES clk hint status
+  // within clkmgr reads 0 (AES is disabled).
   CLKMGR_TESTUTILS_SET_AND_CHECK_CLOCK_HINT(
       clkmgr, kAesClock, kDifToggleDisabled, kDifToggleDisabled);
 
@@ -121,17 +125,20 @@ bool test_main(void) {
 
   // Initiate an AES operation with a known key, plain text and digest, write
   // AES clk hint to 0 and verify that the AES clk hint status within clkmgr now
-  // reads 1 (AES is not idle), before the AES operation is complete.
+  // reads 1 (AES is enabled), before the AES operation is complete.
   CHECK_DIF_OK(dif_aes_start(&aes, &transaction, &key, NULL));
 
   // "Convert" plain data byte arrays to `dif_aes_data_t`.
   dif_aes_data_t in_data_plain;
-  memcpy(in_data_plain.data, kPlainText, ARRAYSIZE(kPlainText));
+  memcpy(in_data_plain.data, kPlainText, sizeof(kPlainText));
 
   // Load the plain text to trigger the encryption operation.
   AES_TESTUTILS_WAIT_FOR_STATUS(&aes, kDifAesStatusInputReady, true, TIMEOUT);
   CHECK_DIF_OK(dif_aes_load_data(&aes, in_data_plain));
 
+  // Write the PRNG_RESEED bit to reseed the internal state of the PRNG.
+  CHECK_DIF_OK(dif_aes_trigger(&aes, kDifAesTriggerPrngReseed));
+  CHECK_DIF_OK(dif_aes_trigger(&aes, kDifAesTriggerStart));
   CLKMGR_TESTUTILS_SET_AND_CHECK_CLOCK_HINT(
       clkmgr, kAesClock, kDifToggleDisabled, kDifToggleEnabled);
 
@@ -156,8 +163,8 @@ bool test_main(void) {
   // Finish the ECB encryption transaction.
   CHECK_DIF_OK(dif_aes_end(&aes));
 
-  CHECK_BUFFER(out_data_cipher.data, kCipherTextGold,
-               ARRAYSIZE(kCipherTextGold));
+  CHECK_ARRAYS_EQ(out_data_cipher.data, kCipherTextGold,
+                  ARRAYSIZE(kCipherTextGold));
 
   return true;
 }

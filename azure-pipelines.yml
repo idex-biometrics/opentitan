@@ -14,7 +14,7 @@ variables:
   OPENOCD_VERSION: 0.11.0
   TOOLCHAIN_PATH: /opt/buildcache/riscv
   VERIBLE_VERSION: v0.0-2135-gb534c1fe
-  RUST_VERSION: 1.58.0
+  RUST_VERSION: 1.60.0
   # Release tag from https://github.com/lowRISC/lowrisc-toolchains/releases
   TOOLCHAIN_VERSION: 20220210-1
   # This controls where builds happen, and gets picked up by build_consts.sh.
@@ -76,21 +76,15 @@ jobs:
   - bash: ci/scripts/clang-format.sh $SYSTEM_PULLREQUEST_TARGETBRANCH
     condition: eq(variables['Build.Reason'], 'PullRequest')
     displayName: Use clang-format to check C/C++ coding style
+  - bash: ci/scripts/rust-format.sh $SYSTEM_PULLREQUEST_TARGETBRANCH
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    displayName: Use rustfmt to check Rust coding style
   - bash: ci/scripts/include-guard.sh $SYSTEM_PULLREQUEST_TARGETBRANCH
     condition: eq(variables['Build.Reason'], 'PullRequest')
     displayName: Check formatting on header guards
   - bash: ci/scripts/whitespace.sh $SYSTEM_PULLREQUEST_TARGETBRANCH
     condition: eq(variables['Build.Reason'], 'PullRequest')
     displayName: Check trailing whitespace
-  - bash: ci/scripts/verible-lint.sh rtl
-    condition: eq(variables['Build.Reason'], 'PullRequest')
-    displayName: Style-Lint RTL Verilog source files with Verible
-  - bash: ci/scripts/verible-lint.sh dv
-    condition: eq(variables['Build.Reason'], 'PullRequest')
-    displayName: Style-Lint DV Verilog source files with Verible
-  - bash: ci/scripts/verible-lint.sh fpv
-    condition: eq(variables['Build.Reason'], 'PullRequest')
-    displayName: Style-Lint FPV Verilog source files with Verible
   - bash: ci/scripts/build-docs.sh
     displayName: Render documentation
   - bash: ci/scripts/build-site.sh
@@ -98,6 +92,21 @@ jobs:
   - bash: ci/scripts/get-build-type.sh "$SYSTEM_PULLREQUEST_TARGETBRANCH" "$(Build.Reason)"
     displayName: Check what kinds of changes the PR contains
     name: DetermineBuildType
+
+- job: download_bazel_dependencies
+  displayName: Download Bazel fetched dependencies
+  continueOnError: True
+  pool:
+    vmImage: ubuntu-18.04
+  steps:
+  - bash: |
+      set -x -e
+      util/prep-bazel-airgapped-build.sh
+      rm -rf bazel-airgapped/bitstreams-cache
+      tar -cf bazel-airgapped.tar.gz bazel-airgapped
+    displayName: Download and package dependencies
+  - publish: $(System.DefaultWorkingDirectory)/bazel-airgapped.tar.gz
+    artifact: bazel-dependencies
 
 - job: slow_lints
   displayName: Run code quality checks (in-depth lint)
@@ -110,30 +119,40 @@ jobs:
     displayName: Use buildifier to check Bazel coding style
   - bash: ci/scripts/check-vendoring.sh
     displayName: Check vendored directories are up-to-date
+  - bash: ci/scripts/verible-lint.sh rtl
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    displayName: Style-Lint RTL Verilog source files with Verible
+  - bash: ci/scripts/verible-lint.sh dv
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    displayName: Style-Lint DV Verilog source files with Verible
+  - bash: ci/scripts/verible-lint.sh fpv
+    condition: eq(variables['Build.Reason'], 'PullRequest')
+    displayName: Style-Lint FPV Verilog source files with Verible
 
 - job: sw_build
   displayName: Build Software for Earl Grey toplevel design
   dependsOn: lint
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'))
-  pool: ci-public
+  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
+  pool:
+    vmImage: ubuntu-18.04
   steps:
   - template: ci/install-package-dependencies.yml
   - bash: |
-      set -x
-      sudo util/get-toolchain.py \
-        --install-dir="$TOOLCHAIN_PATH" \
-        --release-version="$TOOLCHAIN_VERSION" \
-        --update
-    displayName: Install toolchain
-  - bash: |
-      . util/build_consts.sh
-      ./meson_init.sh -A
-      ninja -C "$OBJ_DIR" all
+      set -x -e
+      ci/bazelisk.sh build //sw/... \
+      --define DISABLE_VERILATOR_BUILD=true # build verilator tests but not verilator
     displayName: Build embedded targets
   - bash: |
+      set -x -e
       . util/build_consts.sh
-      ninja -C "$OBJ_DIR" test
-    displayName: Run unit tests
+      # copy the mask rom to a specific location
+      MASK_ROM_TARGET=${BIN_DIR}/sw/device/silicon_creator/mask_rom
+      mkdir -p ${MASK_ROM_TARGET}
+      MASK_ROM=$(ci/scripts/target-location.sh //sw/device/silicon_creator/mask_rom:mask_rom_fpga_cw310_scr_vmem)
+      cp $MASK_ROM $MASK_ROM_TARGET/mask_rom_fpga_cw310.scr.39.vmem
+      MASK_ROM_DIR=$(dirname $MASK_ROM)
+      cp $MASK_ROM_DIR/mask_rom_fpga_cw310.elf $MASK_ROM_TARGET/mask_rom_fpga_cw310.elf
+      cp $MASK_ROM_DIR/mask_rom_fpga_cw310.bin $MASK_ROM_TARGET/mask_rom_fpga_cw310.bin
   - template: ci/upload-artifacts-template.yml
     parameters:
       includePatterns:
@@ -142,93 +161,36 @@ jobs:
 - job: cw310_sw_build
   displayName: Build Software required for CW310 FPGA synthesis
   dependsOn: lint
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'))
+  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
   pool:
     vmImage: ubuntu-18.04
   steps:
   - template: ci/install-package-dependencies.yml
   - bash: |
-      set -x
-      sudo util/get-toolchain.py \
-        --install-dir="$TOOLCHAIN_PATH" \
-        --release-version="$TOOLCHAIN_VERSION" \
-        --update
-    displayName: Install toolchain
-  - bash: |
       . util/build_consts.sh
-      ./meson_init.sh -A
-      ninja -C "$OBJ_DIR" \
-        sw/device/otp_img/otp_img_export_fpga_cw310 \
-        sw/device/lib/testing/test_rom/test_rom_export_fpga_cw310
+      ci/bazelisk.sh build \
+        //hw/ip/otp_ctrl/data:img_rma \
+        //sw/device/lib/testing/test_rom:test_rom_fpga_cw310_scr_vmem \
+        //sw/device/lib/testing/test_rom:test_rom_fpga_cw310_bin
+      mkdir -p $BIN_DIR/sw/device/otp_img
+      mkdir -p $BIN_DIR/sw/device/lib/testing/test_rom
+      cp $(ci/scripts/target-location.sh //hw/ip/otp_ctrl/data:img_rma) $BIN_DIR/sw/device/otp_img/otp_img_fpga_cw310.vmem
+      TEST_ROM=$(ci/scripts/target-location.sh //sw/device/lib/testing/test_rom:test_rom_fpga_cw310_scr_vmem)
+      TEST_ROM_DIR=$(dirname $TEST_ROM)
+      TEST_ROM_TARGET=$BIN_DIR/sw/device/lib/testing/test_rom
+      cp $TEST_ROM $TEST_ROM_TARGET/test_rom_fpga_cw310.scr.39.vmem
+      cp $TEST_ROM_DIR/*fpga_cw310.elf $TEST_ROM_TARGET/test_rom_fpga_cw310.elf
+      cp $TEST_ROM_DIR/*fpga_cw310.bin $TEST_ROM_TARGET/test_rom_fpga_cw310.bin
     displayName: Build embedded targets
   - template: ci/upload-artifacts-template.yml
     parameters:
       includePatterns:
         - "/sw/***"
 
-# Software targeting the English Breakfast top level is produced by patching
-# the source tree before building. This builds a selected subset of software
-# only.
-# TODO: This is a rather ugly hack, which will go away once we properly support
-# building more than one top-level design with different parametrizations.
-# Work towards this goal is tracked in issue #4669.
-- job: sw_build_englishbreakfast
-  displayName: Build Software for English Breakfast toplevel design
-  dependsOn: lint
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'))
-  pool:
-    vmImage: ubuntu-18.04
-  steps:
-  - template: ci/install-package-dependencies.yml
-  - bash: |
-      set -x
-      sudo util/get-toolchain.py \
-        --install-dir="$TOOLCHAIN_PATH" \
-        --release-version="$TOOLCHAIN_VERSION" \
-        --update
-    displayName: Install toolchain
-  - bash: |
-      . util/build_consts.sh
-      ./meson_init.sh -A
-      # Patch software.
-      ./hw/top_englishbreakfast/util/prepare_sw.py
-      # Build FPGA boot ROM and aes_serial binary for FPGA SCA.
-      ninja -C "$OBJ_DIR" sw/device/lib/testing/test_rom/test_rom_export_fpga_nexysvideo
-      ninja -C "$OBJ_DIR" sw/device/sca/aes_serial_export_fpga_nexysvideo
-      # Build binaries for Verilator simulation.
-      ninja -C "$OBJ_DIR" sw/device/lib/testing/test_rom/test_rom_export_sim_verilator
-      ninja -C "$OBJ_DIR" sw/device/tests/aes_smoketest_export_sim_verilator
-      ninja -C "$OBJ_DIR" sw/device/examples/hello_world/hello_world_export_sim_verilator
-    displayName: Build embedded targets
-  - template: ci/upload-artifacts-template.yml
-    parameters:
-      includePatterns:
-        - "/sw/device/***"
-
-- job: chip_earlgrey_verilator
-  displayName: Build Verilator simulation of the Earl Grey toplevel design
-  dependsOn: lint
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'))
-  pool: ci-public
-  steps:
-  - template: ci/install-package-dependencies.yml
-  - bash: |
-      python3 --version
-      fusesoc --version
-      verilator --version
-      verible-verilog-lint --version
-    displayName: Display environment
-  - bash: ci/scripts/build-chip-verilator.sh earlgrey
-    displayName: Build simulation with Verilator
-  - template: ci/upload-artifacts-template.yml
-    parameters:
-      includePatterns:
-        - "/hw/top_earlgrey/Vchip_earlgrey_verilator"
-
 - job: chip_englishbreakfast_verilator
   displayName: Build Verilator simulation of the English Breakfast toplevel design
   dependsOn: lint
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'))
+  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
   pool:
     vmImage: ubuntu-18.04
   steps:
@@ -247,61 +209,73 @@ jobs:
         - "/hw/top_englishbreakfast/Vchip_englishbreakfast_verilator"
 
 - job: execute_verilated_tests
-  displayName: Execute tests on the Verilated system (excl. slow tests)
+  displayName: Build and run fast tests on sim_verilator
   pool: ci-public
   timeoutInMinutes: 120
-  dependsOn:
-    - chip_earlgrey_verilator
-    - sw_build
+  dependsOn: lint
   steps:
   - template: ci/install-package-dependencies.yml
-  - template: ci/download-artifacts-template.yml
-    parameters:
-      downloadPartialBuildBinFrom:
-        - chip_earlgrey_verilator
-        - sw_build
+  - task: DownloadSecureFile@1
+    condition: eq(variables['Build.SourceBranchName'], 'master')
+    name: bazelCacheGcpKey
+    inputs:
+      secureFile: "bazel_cache_gcp_key.json"
+  - bash: echo "##vso[task.setvariable variable=bazelCacheGcpKeyPath]$(bazelCacheGcpKey.secureFilePath)"
+    condition: eq(variables['Build.SourceBranchName'], 'master')
+    displayName: Set the remote cache GCP key path
   - bash: |
-      # Install an additional pytest dependency for result upload.
-      pip3 install pytest-azurepipelines
-
+      set -x -e
+      export GCP_BAZEL_CACHE_KEY=$(bazelCacheGcpKeyPath)
+      ci/scripts/run-verilator-tests.sh
+    displayName: Build and execute tests
+  # TODO: build and cache the verilator model to avoid building twice (#12574)
+  - bash: |
       . util/build_consts.sh
-      pytest --version
-      pytest test/systemtest/earlgrey/test_sim_verilator.py \
-        -m "not slow" \
-        --log-cli-level=DEBUG \
-        --test-run-title="Run system tests with Verilator simulation (excl. slow tests)" \
-        --napoleon-docstrings
-    displayName: Execute tests
+      mkdir -p "$BIN_DIR/hw/top_earlgrey/"
+      cp $(ci/scripts/target-location.sh //hw:verilator)/sim-verilator/Vchip_sim_tb \
+        "$BIN_DIR/hw/top_earlgrey/Vchip_earlgrey_verilator"
+    displayName: Copy //hw:verilator to $BIN_DIR
+  - template: ci/upload-artifacts-template.yml
+    parameters:
+      includePatterns:
+        - "/hw/top_earlgrey/Vchip_earlgrey_verilator"
 
-- job: execute_verilated_tests_englishbreakfast
-  displayName: Execute tests on the Verilated English Breakfast toplevel design
-  pool: ci-public
-  dependsOn:
-    - chip_englishbreakfast_verilator
-    - sw_build_englishbreakfast
+# Software targeting the English Breakfast top level is produced by patching
+# the source tree before building. This builds a selected subset of software
+# only.
+# TODO: This is a rather ugly hack, which will go away once we properly support
+# building more than one top-level design with different parametrizations.
+# Work towards this goal is tracked in issue #4669.
+- job: build_and_execute_verilated_tests_englishbreakfast
+  displayName: Build and execute tests on the Verilated English Breakfast toplevel design with Bazel
+  pool:
+    vmImage: ubuntu-18.04
+  dependsOn: chip_englishbreakfast_verilator
   steps:
   - template: ci/install-package-dependencies.yml
   - template: ci/download-artifacts-template.yml
     parameters:
       downloadPartialBuildBinFrom:
         - chip_englishbreakfast_verilator
-        - sw_build_englishbreakfast
   - bash: |
-      # Install an additional pytest dependency for result upload.
-      pip3 install pytest-azurepipelines
-
       . util/build_consts.sh
-      pytest --version
-      pytest test/systemtest/englishbreakfast/test_sim_verilator.py \
-        -m "not slow" \
-        --log-cli-level=DEBUG \
-        --test-run-title="Run English Breakfast system tests with Verilator simulation" \
-        --napoleon-docstrings
+      ci/scripts/run-english-breakfast-verilator-tests.sh
     displayName: Execute tests
+  - bash: |
+      . util/build_consts.sh
+      mkdir -p "$BIN_DIR/sw/device/lib/testing/test_rom"
+      cp $(ci/scripts/target-location.sh //sw/device/lib/testing/test_rom:test_rom_fpga_nexysvideo_vmem) \
+        "$BIN_DIR/sw/device/lib/testing/test_rom"
+    displayName: Copy test_rom_fpga_nexysvideo_vmem to $BIN_DIR
+  - template: ci/upload-artifacts-template.yml
+    parameters:
+      includePatterns:
+        - "/sw/device/lib/testing/test_rom/test_rom_fpga_nexysvideo.32.vmem"
 
 - job: otbn_standalone_tests
   displayName: Run OTBN Smoke Test
   dependsOn: lint
+  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
   pool:
     vmImage: ubuntu-18.04
   timeoutInMinutes: 10
@@ -336,9 +310,9 @@ jobs:
     - lint
     # The bootrom is built into the FPGA image at synthesis time.
     - cw310_sw_build
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'))
+  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
   pool: ci-public
-  timeoutInMinutes: 120 # 2 hours
+  timeoutInMinutes: 180
   steps:
   - template: ci/install-package-dependencies.yml
   - template: ci/download-artifacts-template.yml
@@ -373,7 +347,7 @@ jobs:
   dependsOn:
     - chip_earlgrey_cw310
     - sw_build
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'))
+  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
   pool: ci-public
   timeoutInMinutes: 10
   steps:
@@ -412,10 +386,8 @@ jobs:
 
 - job: chip_englishbreakfast_cw305
   displayName: Build CW305 variant of the English Breakfast toplevel design using Vivado
-  dependsOn:
-    - lint
-    - sw_build_englishbreakfast
-  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'))
+  dependsOn: build_and_execute_verilated_tests_englishbreakfast
+  condition: and(succeeded(), eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
   pool: ci-public
   timeoutInMinutes: 120 # 2 hours
   steps:
@@ -423,7 +395,7 @@ jobs:
   - template: ci/download-artifacts-template.yml
     parameters:
       downloadPartialBuildBinFrom:
-        - sw_build_englishbreakfast
+        - build_and_execute_verilated_tests_englishbreakfast
   - bash: |
       set -e
       module load "xilinx/vivado/$(VIVADO_VERSION)"
@@ -437,29 +409,21 @@ jobs:
 - job: execute_fpga_tests_cw310
   displayName: Execute tests on ChipWhisperer CW310 FPGA board
   pool: FPGA
-  timeoutInMinutes: 8
+  timeoutInMinutes: 30
   dependsOn:
     - chip_earlgrey_cw310
+    - chip_earlgrey_cw310_splice_mask_rom
     - sw_build
   steps:
   - template: ci/install-package-dependencies.yml
   - template: ci/download-artifacts-template.yml
     parameters:
       downloadPartialBuildBinFrom:
-        - chip_earlgrey_cw310
+        - chip_earlgrey_cw310_splice_mask_rom
         - sw_build
   - bash: |
       set -e
-
-      # Install an additional pytest dependency for result upload.
-      pip3 install pytest-azurepipelines
-
-      . util/build_consts.sh
-      pytest --version
-      pytest test/systemtest/earlgrey/test_fpga_cw310.py \
-        --log-cli-level=DEBUG \
-        --test-run-title="Run system tests on ChipWhisperer CW310 FPGA board" \
-        --napoleon-docstrings
+      ci/scripts/run-fpga-cw310-tests.sh
     displayName: Execute tests
 
 - job: deploy_release_artifacts
@@ -469,22 +433,22 @@ jobs:
   dependsOn:
     - lint
     - sw_build
-    - chip_earlgrey_verilator
+    - execute_verilated_tests
     - chip_earlgrey_cw310
-  condition: and(eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'))
+  condition: and(eq(dependencies.lint.outputs['DetermineBuildType.onlyDocChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyDvChanges'], '0'), eq(dependencies.lint.outputs['DetermineBuildType.onlyCdcChanges'], '0'))
   steps:
   - template: ci/install-package-dependencies.yml
   - template: ci/download-artifacts-template.yml
     parameters:
       downloadPartialBuildBinFrom:
         - sw_build
-        - chip_earlgrey_verilator
+        - execute_verilated_tests
         - chip_earlgrey_cw310
         - chip_englishbreakfast_verilator
   - bash: |
       . util/build_consts.sh
 
-      util/make_distribution.sh
+      ci/scripts/make_distribution.sh
 
       tar --list -f $BIN_DIR/opentitan-*.tar.xz
       # Put the resulting tar file into a directory the |publish| step below can reference.
@@ -559,5 +523,6 @@ jobs:
             --build_tests_only=false \
             --define DISABLE_VERILATOR_BUILD=true \
             --test_tag_filters=-broken,-cw310,-verilator,-dv \
+            --build_tag_filters=-verilator,-cw310,-dv \
             //sw/...
       displayName: "Build and Unit Test Software with Bazel"

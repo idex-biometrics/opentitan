@@ -120,6 +120,7 @@ Otherwise, try to find the `riscv32-unknown-elf-as` file in your file system and
 ## Step 4: Build OpenTitan Software
 
 Follow the [dedicated guide]({{< relref "build_sw" >}}) to build OpenTitan's software, and then return to this page.
+Some tests might fail because you don't have Verilator installed, which we will do in the next step.
 
 ## Step 5: Set up your Simulation Tool or FPGA
 
@@ -128,7 +129,7 @@ Unless you know you need the FPGA or DV guides, you can skip this step.*
 
 In order to run the software we built in the last step, we need to have some way to emulate an OpenTitan chip.
 There are a few different options depending on your equipment and use-case.
-Follow the guide that applies to you:
+Follow the guide(s) that applies to you:
 * **Option 1 (Verilator setup, recommended for new users):** [Verilator guide]({{< relref "setup_verilator.md" >}}), or
 * Option 2 (FPGA setup): [FPGA guide]({{< relref "setup_fpga.md" >}}), or
 * Option 3 (design verification setup): [DV guide]({{< relref "setup_dv.md" >}})
@@ -208,4 +209,3 @@ If you are interested in these, check out the additional resources below.
 * [OpenTitan Software]({{< relref "/sw" >}})
 * [Writing and Building Software for OTBN]({{< relref "otbn_sw.md" >}})
 * [Rust for Embedded C Programmers]({{< relref "rust_for_c.md" >}})
-

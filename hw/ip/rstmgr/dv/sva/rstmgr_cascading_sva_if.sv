@@ -153,28 +153,25 @@ interface rstmgr_cascading_sva_if (
     // The latter is checked independently in pwrmgr_rstmgr_sva_if.
     `CASCADED_ASSERTS(CascadeLcToSys, lc_rst_or_sys_req_n[pd], rst_sys_src_n[pd], SysCycles, clk_i)
 
-    // Controlled by rst_lc_src_n.
-    `CASCADED_ASSERTS(CascadeLcToLcIoDiv4, rst_lc_src_n[pd], resets_o.rst_lc_io_div4_n[pd],
-                      SysCycles, clk_io_div4_i)
-    `CASCADED_ASSERTS(CascadeLcToLcIoDiv4Shadowed, rst_lc_src_n[pd],
-                      resets_o.rst_lc_io_div4_shadowed_n[pd], SysCycles, clk_io_div4_i)
-
     // Controlled by rst_sys_src_n.
+    // rst_sys_aon_n[Domain0Sel] is not used by anyone
+    if (pd == rstmgr_pkg::DomainAonSel) begin : gen_sys_aon_chk
     `CASCADED_ASSERTS(CascadeSysToSysAon, rst_sys_src_n[pd], resets_o.rst_sys_aon_n[pd], SysCycles,
                       clk_aon_i)
+    end
     `CASCADED_ASSERTS(CascadeSysToSysIoDiv4, rst_sys_src_n[pd], resets_o.rst_sys_io_div4_n[pd],
                       SysCycles, clk_io_div4_i)
   end
 
   // Aon to POR
-  `CASCADED_ASSERTS(CascadeEffAonToRstPor, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
-                    resets_o.rst_por_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_main_i)
-  `CASCADED_ASSERTS(CascadeEffAonToRstPorIo, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
-                    resets_o.rst_por_io_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_io_i)
-  `CASCADED_ASSERTS(CascadeEffAonToRstPorIoDiv2, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
-                    resets_o.rst_por_io_div2_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_io_div2_i)
-  `CASCADED_ASSERTS(CascadeEffAonToRstPorUcb, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
-                    resets_o.rst_por_usb_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_usb_i)
+  //`CASCADED_ASSERTS(CascadeEffAonToRstPor, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
+  //                  resets_o.rst_por_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_main_i)
+  //`CASCADED_ASSERTS(CascadeEffAonToRstPorIo, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
+  //                  resets_o.rst_por_io_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_io_i)
+  //`CASCADED_ASSERTS(CascadeEffAonToRstPorIoDiv2, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
+  //                  resets_o.rst_por_io_div2_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_io_div2_i)
+  //`CASCADED_ASSERTS(CascadeEffAonToRstPorUcb, effective_aon_rst_n[rstmgr_pkg::DomainAonSel],
+  //                  resets_o.rst_por_usb_n[rstmgr_pkg::DomainAonSel], SyncCycles, clk_usb_i)
 
   // Controlled by rst_lc_src_n.
   `CASCADED_ASSERTS(CascadeLcToLcAon, rst_lc_src_n[rstmgr_pkg::DomainAonSel],

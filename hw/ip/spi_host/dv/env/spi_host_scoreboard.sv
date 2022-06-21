@@ -51,7 +51,8 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
   int                               checked_tx_seg_cnt = 0;
   int                               in_rx_seq_cnt      = 0;
   int                               checked_rx_seq_cnt = 0;
-
+  // flag used used for SB when spi tx data is programmed later than command
+  local bit wr_cmd = 0;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
@@ -178,6 +179,7 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
     bit [TL_AW-1:0] csr_addr_mask = ral.get_addr_mask();
     uvm_reg_addr_t csr_addr = ral.get_word_aligned_addr(item.a_addr);
     spi_segment_item rd_segment;
+    spi_segment_item wr_segment;
 
     bit cmd_phase_write = (write && channel  == AddrChannel);
     bit data_phase_read  = (!write && channel == DataChannel);
@@ -204,6 +206,15 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
         if (cmd_phase_write) begin
           // collect write data
           host_wr_segment.spi_data.push_back(tl_byte[i]);
+        end
+      end
+      if (cfg.tx_stall_check) begin
+        if (wr_cmd) begin
+          `downcast(wr_segment, host_wr_segment.clone());
+          write_segment_q.push_back(wr_segment);
+          wr_cmd = 1'b0;
+          // clear item
+          host_wr_segment = new();
         end
       end
     end else if ((csr_addr & csr_addr_mask) inside {[SPI_HOST_RX_FIFO_START :
@@ -282,7 +293,6 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
         end
 
         "command": begin
-          spi_segment_item    wr_segment;
           spi_cmd_reg.direction = spi_dir_e'(get_field_val(ral.command.direction, item.a_data));
           spi_cmd_reg.mode      = spi_mode_e'(get_field_val(ral.command.speed, item.a_data));
           spi_cmd_reg.csaat     = get_field_val(ral.command.csaat, item.a_data);
@@ -293,18 +303,23 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
           host_wr_segment.command_reg.direction = spi_cmd_reg.direction;
           host_wr_segment.command_reg.mode      = spi_cmd_reg.mode;
           host_wr_segment.command_reg.csaat     = spi_cmd_reg.csaat;
-          `downcast(wr_segment, host_wr_segment.clone());
           if (write) begin
-            write_segment_q.push_back(wr_segment);
-            `uvm_info(`gfn, $sformatf("\n  created expeted segment item %s",
-                                        wr_segment.convert2string()), UVM_HIGH)
+            `downcast(wr_segment, host_wr_segment.clone());
+            if (cfg.tx_stall_check) begin
+              wr_cmd = 1'b1;
+            end else begin
+              write_segment_q.push_back(wr_segment);
+              `uvm_info(`gfn, $sformatf("\n  created expeted segment item %s",
+                                          wr_segment.convert2string()), UVM_HIGH)
+              // clear item
+              host_wr_segment = new();
+            end
           end
           if (cfg.en_cov) begin
             cov.duplex_cg.sample(spi_cmd_reg.direction);
             cov.command_cg.sample(spi_cmd_reg);
+            cov.segment_speed_cg.sample(spi_cmd_reg);
           end
-          // clear item
-          host_wr_segment = new();
         end
         "intr_enable": begin
           spi_intr_enable_reg.spi_event  = bit'(get_field_val(ral.intr_enable.spi_event,
@@ -318,30 +333,12 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
             bit [TL_DW-1:0] intr_en = `gmv(ral.intr_enable);
             bit [NumSpiHostIntr-1:0] intr_exp = item.a_data | `gmv(ral.intr_state);
             void'(ral.intr_state.predict(.value(intr_exp), .kind(UVM_PREDICT_DIRECT)));
+            // sample coverage
             if (cfg.en_cov) begin
               foreach (intr_exp[i]) begin
                 cov.intr_test_cg.sample(i, item.a_data[i], intr_en[i], intr_exp[i]);
               end
             end
-          end
-        end
-        "status": begin
-         spi_status_reg.ready       =  get_field_val(ral.status.ready, item.a_data);
-         spi_status_reg.active      =  get_field_val(ral.status.active, item.a_data);
-         spi_status_reg.txfull      =  get_field_val(ral.status.txfull, item.a_data);
-         spi_status_reg.txempty     =  get_field_val(ral.status.txempty, item.a_data);
-         spi_status_reg.txstall     =  get_field_val(ral.status.txstall, item.a_data);
-         spi_status_reg.tx_wm       =  get_field_val(ral.status.txwm, item.a_data);
-         spi_status_reg.rxfull      =  get_field_val(ral.status.rxfull, item.a_data);
-         spi_status_reg.rxempty     =  get_field_val(ral.status.rxempty, item.a_data);
-         spi_status_reg.rxstall     =  get_field_val(ral.status.rxstall, item.a_data);
-         spi_status_reg.byteorder   =  get_field_val(ral.status.byteorder, item.a_data);
-         spi_status_reg.rx_wm       =  get_field_val(ral.status.rxwm, item.a_data);
-         spi_status_reg.cmd_qd      =  get_field_val(ral.status.cmdqd, item.a_data);
-         spi_status_reg.rx_qd       =  get_field_val(ral.status.rxqd, item.a_data);
-         spi_status_reg.tx_qd       =  get_field_val(ral.status.txqd, item.a_data);
-          if (cfg.en_cov) begin
-            cov.status_cg.sample(spi_status_reg);
           end
         end
         "csid": begin
@@ -390,17 +387,17 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
     if (data_phase_read) begin
       case (csr_name)
         "intr_state": begin
-         spi_intr_state_reg.spi_event  = bit'(get_field_val(ral.intr_state.spi_event,
-                                                            item.a_data));
-         spi_intr_state_reg.error      = bit'(get_field_val(ral.intr_state.error, item.a_data));
-         if (cfg.en_cov) begin
-           bit [TL_DW-1:0]         intr_en  = `gmv(ral.intr_enable);
-           bit [NumSpiHostIntr-1:0]  intr_exp = `gmv(ral.intr_state);
+           spi_intr_state_reg.spi_event  = bit'(get_field_val(ral.intr_state.spi_event,
+                                                              item.a_data));
+           spi_intr_state_reg.error      = bit'(get_field_val(ral.intr_state.error, item.a_data));
+           if (cfg.en_cov) begin
+             bit [TL_DW-1:0]         intr_en  = `gmv(ral.intr_enable);
+             bit [NumSpiHostIntr-1:0]  intr_exp = `gmv(ral.intr_state);
              foreach (intr_exp[i]) begin
                cov.intr_cg.sample(i, intr_en[i], item.d_data);
                cov.intr_pins_cg.sample(i, cfg.intr_vif.pins[i]);
              end
-         end
+           end
          end
         "error_status": begin
           spi_error_status_reg.accessinval   = bit'(get_field_val(ral.error_status.accessinval,
@@ -417,6 +414,25 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
                                                                   item.a_data));
           if (cfg.en_cov) begin
             cov.error_status_cg.sample(spi_error_status_reg, spi_error_enable_reg);
+          end
+        end
+        "status": begin
+          spi_status_reg.ready       =  get_field_val(ral.status.ready, item.a_data);
+          spi_status_reg.active      =  get_field_val(ral.status.active, item.a_data);
+          spi_status_reg.txfull      =  get_field_val(ral.status.txfull, item.a_data);
+          spi_status_reg.txempty     =  get_field_val(ral.status.txempty, item.a_data);
+          spi_status_reg.txstall     =  get_field_val(ral.status.txstall, item.a_data);
+          spi_status_reg.tx_wm       =  get_field_val(ral.status.txwm, item.a_data);
+          spi_status_reg.rxfull      =  get_field_val(ral.status.rxfull, item.a_data);
+          spi_status_reg.rxempty     =  get_field_val(ral.status.rxempty, item.a_data);
+          spi_status_reg.rxstall     =  get_field_val(ral.status.rxstall, item.a_data);
+          spi_status_reg.byteorder   =  get_field_val(ral.status.byteorder, item.a_data);
+          spi_status_reg.rx_wm       =  get_field_val(ral.status.rxwm, item.a_data);
+          spi_status_reg.cmd_qd      =  get_field_val(ral.status.cmdqd, item.a_data);
+          spi_status_reg.rx_qd       =  get_field_val(ral.status.rxqd, item.a_data);
+          spi_status_reg.tx_qd       =  get_field_val(ral.status.txqd, item.a_data);
+          if (cfg.en_cov) begin
+            cov.status_cg.sample(spi_status_reg);
           end
         end
         default: begin
@@ -453,7 +469,7 @@ class spi_host_scoreboard extends cip_base_scoreboard #(
     `DV_EOT_PRINT_Q_CONTENTS(spi_segment_item, read_segment_q)
     `DV_EOT_PRINT_TLM_FIFO_CONTENTS(spi_item, host_data_fifo)
     `DV_EOT_PRINT_TLM_FIFO_CONTENTS(spi_item, device_data_fifo)
-    if ((rx_data_q.size() != 0))
+    if((rx_data_q.size() != 0))
       `uvm_fatal(`gfn, $sformatf("ERROR - RX FIFO in DUT still has data to be read!"))
   endfunction : check_phase
 

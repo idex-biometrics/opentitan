@@ -15,6 +15,9 @@
 % for src in clocks.derived_srcs.values():
     {clock: "clk_${src.name}_i", reset: "rst_${src.name}_ni", internal: true},
 % endfor
+% for src in clocks.all_derived_srcs():
+    {reset: "rst_por_${src}_ni"},
+% endfor
   ]
   bus_interfaces: [
     { protocol: "tlul", direction: "device" }
@@ -160,6 +163,15 @@
       act:     "rcv",
       package: "prim_mubi_pkg",
       width:   "${len(hint_names)}"
+    },
+
+    { struct:  "logic",
+      desc:    "Indicates clocks are calibrated and frequencies accurate",
+      type:    "uni",
+      name:    "calib_rdy",
+      act:     "rcv",
+      package: "",
+      width:   "1"
     },
   ],
 
@@ -430,7 +442,7 @@
     { name: "MEASURE_CTRL_REGWEN",
       desc: "Measurement control write enable",
       swaccess: "rw0c",
-      hwaccess: "none",
+      hwaccess: "hrw",
       fields: [
         { bits: "0",
           name: "EN",
@@ -444,14 +456,37 @@
     },
 <% aon_freq = clocks.all_srcs['aon'].freq %>\
 % for src in typed_clocks.rg_srcs:
-  <%
-    freq = clocks.all_srcs[src].freq
-    ratio = int(freq / aon_freq)
-    # Add extra bit to width for margin
-    width = ratio.bit_length() + 1
-    max_msb = 4 + width - 1
-    min_msb = (max_msb + 1) + width - 1
-  %>
+    { name: "${src.upper()}_MEAS_CTRL_EN",
+      desc: '''
+        Enable for measurement control
+      ''',
+      regwen: "MEASURE_CTRL_REGWEN",
+      swaccess: "rw",
+      hwaccess: "hrw",
+      async: "clk_${src}_i",
+      fields: [
+        {
+          bits: "3:0",
+          name: "EN",
+          desc: "Enable measurement for ${src}",
+          mubi: true,
+          resval: false,
+        },
+      ]
+      // Measurements can cause recoverable errors depending on the
+      // thresholds which randomized CSR tests will not predict correctly.
+      // To provide better CSR coverage we allow writing the threshold
+      // fields, but not enabling the counters.
+      tags: ["excl:CsrAllTests:CsrExclWrite"]
+    },
+<%
+  freq = clocks.all_srcs[src].freq
+  ratio = int(freq / aon_freq)
+  # Add extra bit to width for margin
+  width = ratio.bit_length() + 1
+  max_msb = width - 1
+  min_msb = (max_msb + 1) + width - 1
+%>
     { name: "${src.upper()}_MEAS_CTRL_SHADOWED",
       desc: '''
         Configuration controls for ${src} measurement.
@@ -468,19 +503,7 @@
       storage_err_alert: "fatal_fault",
       fields: [
         {
-          bits: "0",
-          name: "EN",
-          desc: "Enable measurement for ${src}",
-          resval: "0",
-          // Measurements can cause recoverable errors depending on the
-          // thresholds which randomized CSR tests will not predict correctly.
-          // To provide better CSR coverage we allow writing the threshold
-          // fields, but not enabling the counters.
-          tags: ["excl:CsrNonInitTests:CsrExclWrite"]
-        },
-
-        {
-          bits: "${max_msb}:4",
+          bits: "${max_msb}:0",
           name: "HI",
           desc: "Max threshold for ${src} measurement",
           resval: "${ratio + 10}"

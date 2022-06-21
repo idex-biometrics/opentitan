@@ -13,7 +13,11 @@
 
 const device_type_t kDeviceType = kDeviceFpgaNexysVideo;
 
-const uint64_t kClockFreqCpuHz = 10 * 1000 * 1000;  // 10MHz
+const uint64_t kClockFreqCpuMhz = 10;
+
+const uint64_t kClockFreqCpuHz = kClockFreqCpuMhz * 1000 * 1000;
+
+uint64_t to_cpu_cycles(uint64_t usec) { return usec * kClockFreqCpuMhz; }
 
 const uint64_t kClockFreqPeripheralHz = 25 * 100 * 1000;  // 2.5MHz
 
@@ -28,6 +32,9 @@ const uint32_t kUartNCOValue =
 
 const uint32_t kUartTxFifoCpuCycles =
     CALCULATE_UART_TX_FIFO_CPU_CYCLES(kUartBaudrate, kClockFreqCpuHz);
+
+const uint32_t kAstCheckPollCpuCycles =
+    CALCULATE_AST_CHECK_POLL_CPU_CYCLES(kClockFreqCpuHz);
 
 const uintptr_t kDeviceTestStatusAddress = 0;
 

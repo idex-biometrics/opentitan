@@ -53,6 +53,7 @@ module tb;
   clkmgr_if clkmgr_if (
     .clk(clk),
     .rst_n(rst_n),
+    .clk_main(clk_main),
     .rst_io_n(rst_io_n),
     .rst_main_n(rst_main_n),
     .rst_usb_n(rst_usb_n)
@@ -85,6 +86,12 @@ module tb;
     .rst_usb_ni (rst_usb_n),
     .clk_aon_i  (clk_aon),
     .rst_aon_ni (rst_aon_n),
+    // Hack alert: This is not the right reset to use here.
+    // the "por" reset should de-assert earlier than the
+    // the other resets. There should also be scenarios
+    // where the other resets assert, but "por" does not,
+    // since por resets are upstream of lc resets.
+    .rst_por_io_ni(rst_io_n),
     .rst_io_div2_ni(rst_io_n),
     // Setting as above...
     .rst_io_div4_ni(rst_io_n),
@@ -114,6 +121,9 @@ module tb;
 
     .jitter_en_o(clkmgr_if.jitter_en_o),
     .clocks_o   (clkmgr_if.clocks_o),
+
+    // assumes calibration is always ready
+    .calib_rdy_i(1'b1),
 
     // TODO: connect and use this interface.
     .hi_speed_sel_o()

@@ -10,7 +10,6 @@
 #include "sw/device/lib/arch/device.h"
 #include "sw/device/lib/base/macros.h"
 #include "sw/device/lib/dif/dif_base.h"
-#include "sw/device/lib/dif/dif_clkmgr.h"
 #include "sw/device/lib/dif/dif_uart.h"
 #include "sw/device/lib/runtime/hart.h"
 #include "sw/device/lib/runtime/log.h"
@@ -64,18 +63,14 @@ static void report_test_status(bool result) {
   test_status_set(result ? kTestStatusPassed : kTestStatusFailed);
 }
 
-OT_WEAK bool closed_source_pre_test_hook(void) { return true; }
-
-OT_WEAK bool closed_source_post_test_hook(void) { return true; }
-
 // A wrapper function is required to enable `test_main()` and test teardown
 // logic to be invoked as a FreeRTOS task. This wrapper can be used by tests
 // that are run on bare-metal.
 static void test_wrapper(void *task_parameters) {
-  // Invoke weak symbol that can be overriden in closed source code.
-  bool result = closed_source_pre_test_hook();
-
-  result = result && test_main() && closed_source_post_test_hook();
+  // Invoke test hooks that can be overridden by closed-source code.
+  bool result = manufacturer_pre_test_hook();
+  result = result && test_main();
+  result = result && manufacturer_post_test_hook();
   report_test_status(result);
 }
 
@@ -85,17 +80,6 @@ void _ottf_main(void) {
   // Initialize the UART to enable logging for non-DV simulation platforms.
   if (kDeviceType != kDeviceSimDV) {
     init_uart();
-  }
-
-  // The kJitterEnabled symbol defaults to false across all hardware platforms.
-  // However, in DV simulation, it may be overridden via a backdoor write with
-  // the plusarg: `+en_jitter=1`.
-  if (kJitterEnabled) {
-    dif_clkmgr_t clkmgr;
-    CHECK_DIF_OK(dif_clkmgr_init(
-        mmio_region_from_addr(TOP_EARLGREY_CLKMGR_AON_BASE_ADDR), &clkmgr));
-    CHECK_DIF_OK(dif_clkmgr_jitter_set_enabled(&clkmgr, kDifToggleEnabled));
-    LOG_INFO("Jitter is enabled");
   }
 
   // Run the test.

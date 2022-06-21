@@ -112,9 +112,9 @@ static void read_and_check_info_page_scrambled(bool is_equal,
       &flash_state, address, kPartitionId, readback_data,
       kDifFlashCtrlPartitionTypeInfo, kDataSize, 0));
   if (is_equal) {
-    CHECK_BUFFER(readback_data, data, kDataSize);
+    CHECK_ARRAYS_EQ(readback_data, data, kDataSize);
   } else {
-    CHECK_BUFFER_NOT_EQ(readback_data, data, kDataSize);
+    CHECK_ARRAYS_NE(readback_data, data, kDataSize);
   }
 }
 
@@ -130,9 +130,9 @@ static void read_and_check_data_page_scrambled(bool is_equal,
       &flash_state, address, kPartitionId, readback_data,
       kDifFlashCtrlPartitionTypeData, kDataSize, 0));
   if (is_equal) {
-    CHECK_BUFFER(readback_data, data, kDataSize);
+    CHECK_ARRAYS_EQ(readback_data, data, kDataSize);
   } else {
-    CHECK_BUFFER_NOT_EQ(readback_data, data, kDataSize);
+    CHECK_ARRAYS_NE(readback_data, data, kDataSize);
   }
 }
 
@@ -200,10 +200,9 @@ static void enter_rma_test_phase(void) {
     token.data[i] = kLcRmaUnlockToken[i];
   }
   CHECK_DIF_OK(dif_lc_ctrl_mutex_try_acquire(&lc));
-
-  dif_lc_ctrl_settings_t settings = {.clock_select = kDifLcCtrlInternalClockEn};
-  CHECK_DIF_OK(
-      dif_lc_ctrl_transition(&lc, kDifLcCtrlStateRma, &token, &settings));
+  CHECK_DIF_OK(dif_lc_ctrl_configure(&lc, kDifLcCtrlStateRma,
+                                     /*use_ext_clock=*/false, &token));
+  CHECK_DIF_OK(dif_lc_ctrl_transition(&lc));
 
   // Enter WFI for detection in the testbench.
   test_status_set(kTestStatusInWfi);

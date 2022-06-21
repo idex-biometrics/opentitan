@@ -89,6 +89,14 @@ class alert_handler_scoreboard extends cip_base_scoreboard #(
           alert_en = ral.alert_en_shadowed[index].get_mirrored_value() &&
               prim_mubi_pkg::mubi4_test_false_loose(cfg.alert_handler_vif.lpg_cg_en[lpg_index]) &&
               prim_mubi_pkg::mubi4_test_false_loose(cfg.alert_handler_vif.lpg_rst_en[lpg_index]);
+
+          // Check that ping mechanism will only ping alerts that have been enabled and locked.
+          if (act_item.alert_esc_type == AlertEscPingTrans) begin
+            `DV_CHECK(alert_en, $sformatf("alert %0s triggered but not enabled", index))
+            `DV_CHECK((`gmv(ral.alert_regwen[index]) == 0),
+                      $sformatf("alert %0s triggered but not locked", index))
+          end
+
           if (alert_en) begin
             // alert detected
             if (act_item.alert_esc_type == AlertEscSigTrans && !act_item.ping_timeout &&
@@ -547,7 +555,7 @@ class alert_handler_scoreboard extends cip_base_scoreboard #(
                        "crashdump value should not change after trigger condition is reached!")
           end
 
-        foreach (crashdump_val.class_esc_state[i]) begin
+          foreach (crashdump_val.class_esc_state[i]) begin
             uvm_reg crashdump_trigger_csr = ral.get_reg_by_name(
                     $sformatf("class%0s_crashdump_trigger_shadowed", class_name[i]));
             if (crashdump_val.class_esc_state[i] == (`gmv(crashdump_trigger_csr) + 3'b100)) begin
@@ -565,9 +573,12 @@ class alert_handler_scoreboard extends cip_base_scoreboard #(
           end
           for (int i = 0; i < NUM_ALERT_CLASSES; i++) begin
             // TODO: check the remaining field of crashdump without using cycle accurate model.
-            if (state_per_class[i] != 0) begin
-              `DV_CHECK_GT(crashdump_val.class_accum_cnt, 0)
-              `DV_CHECK_GT(crashdump_val.class_esc_cnt, 0)
+            if (crashdump_val.class_esc_state[i] != 0) begin
+              // When esc state is not Idle, that means there are alerts and at least entered
+              // timeout mode. Usually both `class_accum_cnt` and `class_esc_cnt` should be larger
+              // than 0, but there is a corner case - when the class counter is cleared but
+              // interrupt is still high. In that case only class_accum_cnt is larger than 0.
+              `DV_CHECK_GT(crashdump_val.class_esc_cnt[i], 0)
             end
           end
         end

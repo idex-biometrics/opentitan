@@ -94,12 +94,12 @@ cc_library(
         ":status",
         "//sw/device/lib/arch:device",
         "//sw/device/lib/base:macros",
-        "//sw/device/lib/dif:clkmgr",
         "//sw/device/lib/dif:uart",
         "//sw/device/lib/runtime:hart",
         "//sw/device/lib/runtime:log",
         "//sw/device/lib/runtime:print",
         "//third_party/freertos",
+        "@manufacturer_test_hooks//:test_hooks",
     ],
     # `:ottf` depends on `:ottf_start`, but `:ottf_start` gets its main function from
     # `:ottf`. Thus we need to include all of the objects in `:ottf` unconditionally

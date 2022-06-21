@@ -32,9 +32,6 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
   // reset is issued
   bit en_auto_alerts_response = 1'b1;
 
-  // knobs to lock shadow register write access if fatal storage error occurred
-  bit do_lock_shadow_reg = 1'b1;
-
   // knob to enable/disable running csr_vseq with passthru_mem_tl_intg_err
   bit en_csr_vseq_w_passthru_mem_intg = 1;
 
@@ -130,8 +127,6 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
 
   task post_start();
     super.post_start();
-    void'($value$plusargs("do_clear_all_interrupts=%0b", do_clear_all_interrupts));
-    if (do_clear_all_interrupts) clear_all_interrupts();
 
     if (expect_fatal_alerts) begin
       // Fatal alert is triggered in this seq. Wait 10_000ns so the background check
@@ -142,6 +137,11 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
     end else begin
       check_no_fatal_alerts();
     end
+
+    // Some fatal alerts might trigger interrupt as well, so only check interrupt after fatal alert
+    // is cleared.
+    void'($value$plusargs("do_clear_all_interrupts=%0b", do_clear_all_interrupts));
+    if (do_clear_all_interrupts) clear_all_interrupts();
   endtask
 
   virtual task apply_reset(string kind = "HARD");
@@ -173,6 +173,7 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
   virtual task tl_access(input bit [BUS_AW-1:0]  addr,
                          input bit               write,
                          inout bit [BUS_DW-1:0]  data,
+                         input uint             tl_access_timeout_ns = default_spinwait_timeout_ns,
                          input bit [BUS_DBW-1:0] mask = '1,
                          input bit               check_rsp = 1'b1,
                          input bit               exp_err_rsp = 1'b0,
@@ -184,9 +185,9 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
                          tl_sequencer            tl_sequencer_h = p_sequencer.tl_sequencer_h,
                          input tl_intg_err_e     tl_intg_err_type = TlIntgErrNone);
     bit completed, saw_err;
-    tl_access_w_abort(addr, write, data, completed, saw_err, mask, check_rsp, exp_err_rsp, exp_data,
-                      compare_mask, check_exp_data, blocking, instr_type, tl_sequencer_h,
-                      tl_intg_err_type);
+    tl_access_w_abort(addr, write, data, completed, saw_err, tl_access_timeout_ns, mask, check_rsp,
+                      exp_err_rsp, exp_data, compare_mask, check_exp_data, blocking, instr_type,
+                      tl_sequencer_h, tl_intg_err_type);
   endtask
 
   // this tl_access can input req_abort_pct (pertentage to enable req abort) and output status for
@@ -197,6 +198,7 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
       inout bit [BUS_DW-1:0]  data,
       output bit              completed,
       output bit              saw_err,
+      input uint              tl_access_timeout_ns = default_spinwait_timeout_ns,
       input bit [BUS_DBW-1:0] mask = '1,
       input bit               check_rsp = 1'b1,
       input bit               exp_err_rsp = 1'b0,
@@ -211,14 +213,14 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
 
     cip_tl_seq_item rsp;
     if (blocking) begin
-      tl_access_sub(addr, write, data, completed, saw_err, rsp, mask, check_rsp,
-                    exp_err_rsp, exp_data, compare_mask, check_exp_data, req_abort_pct,
+      tl_access_sub(addr, write, data, completed, saw_err, rsp, tl_access_timeout_ns, mask,
+                    check_rsp, exp_err_rsp, exp_data, compare_mask, check_exp_data, req_abort_pct,
                     instr_type, tl_sequencer_h, tl_intg_err_type);
     end else begin
       fork
-        tl_access_sub(addr, write, data, completed, saw_err, rsp, mask, check_rsp,
-                      exp_err_rsp, exp_data, compare_mask, check_exp_data, req_abort_pct,
-                      instr_type, tl_sequencer_h, tl_intg_err_type);
+        tl_access_sub(addr, write, data, completed, saw_err, rsp, tl_access_timeout_ns, mask,
+                      check_rsp, exp_err_rsp, exp_data, compare_mask, check_exp_data,
+                      req_abort_pct, instr_type, tl_sequencer_h, tl_intg_err_type);
       join_none
       // Add #0 to ensure that this thread starts executing before any subsequent call
       #0;
@@ -231,6 +233,7 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
                              output bit              completed,
                              output bit              saw_err,
                              output cip_tl_seq_item  rsp,
+                             input uint         tl_access_timeout_ns = default_spinwait_timeout_ns,
                              input bit [BUS_DBW-1:0] mask = '1,
                              input bit               check_rsp = 1'b1,
                              input bit               exp_err_rsp = 1'b0,
@@ -281,7 +284,9 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
 
         csr_utils_pkg::decrement_outstanding_access();,
         // thread to check timeout
-        $sformatf("Timeout waiting tl_access : addr=0x%0h", addr))
+        $sformatf("Timeout waiting tl_access : addr=0x%0h", addr),
+        // Timeout parameter
+        tl_access_timeout_ns)
   endtask
 
   // CIP spec indicates all comportable IPs will have the same standardized interrupt csrs. We can
@@ -495,7 +500,14 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
     // - 20 cycles includes ack response and ack stable time.
     // - 10 is the max difference between alert clock and dut clock.
     int max_alert_handshake_cycles = 20 * 10;
-    if (cfg.list_of_alerts.size() > 0) begin
+
+    // Please only use `bypass_alert_ready_to_end_check` in top-level test.
+    // Because in top-level issuing an reset takes a large amount of simulation time.
+    // For IP level test, please set `exp_fatal_alert` in post_start() instead.
+    bit bypass_alert_ready_to_end_check;
+    void'($value$plusargs("bypass_alert_ready_to_end_check=%0b",
+          bypass_alert_ready_to_end_check));
+    if (cfg.list_of_alerts.size() > 0 && !bypass_alert_ready_to_end_check) begin
       int check_cycles = $urandom_range(max_alert_handshake_cycles,
                                         max_alert_handshake_cycles * 3);
 
@@ -516,6 +528,7 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
   virtual task run_alert_test_vseq(int num_times = 1);
     int num_alerts = cfg.list_of_alerts.size();
     dv_base_reg alert_test_csr = ral.get_dv_base_reg_by_name("alert_test");
+    `DV_CHECK_FATAL(num_alerts > 0, "Please declare `list_of_alerts` under cfg!")
 
     for (int trans = 1; trans <= num_times; trans++) begin
       `uvm_info(`gfn, $sformatf("Running alert test iteration %0d/%0d", trans, num_times), UVM_LOW)
@@ -643,6 +656,11 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
     run_seq_with_rand_reset_vseq(create_seq_by_name(stress_seq_name), num_times);
   endtask
 
+  // Some blocks needs input ports and status / intr csr clean up
+  // for multi loop rand_reset tests
+  // override this task from {block}_common_vseq if needed
+  virtual task rand_reset_eor_clean_up();
+  endtask
   // Run the given sequence and possibly a TL errors vseq (if do_tl_err is set). Suddenly inject a
   // reset after at most reset_delay_bound cycles. When we come out of reset, check all CSR values
   // to ensure they are the documented reset values.
@@ -702,6 +720,7 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
           if (do_read_and_check_all_csrs) read_and_check_all_csrs_after_reset();
         end : isolation_fork
       join
+      rand_reset_eor_clean_up();
     end
   endtask
 
@@ -850,8 +869,11 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
                 if (mem.get_mem_partial_write_support()) mask = get_rand_contiguous_mask();
                 else                                     mask = '1;
                 data = $urandom;
+                // set check_rsp to 0 to skip checking rsp in sequence, as there could be a mem
+                // which always returns d_error = 1. scb will be overriden to handle it and check
+                // the d_error.
                 tl_access_w_abort(.addr(addr), .write(1), .data(data),
-                                  .completed(write_completed), .saw_err(write_error),
+                                  .completed(write_completed), .saw_err(write_error), .check_rsp(0),
                                   .mask(mask), .blocking(1), .req_abort_pct($urandom_range(0, 100)),
                                   .tl_sequencer_h(p_sequencer.tl_sequencer_hs[ral_name]));
 
@@ -867,19 +889,16 @@ class cip_base_vseq #(type RAL_T               = dv_base_reg_block,
               addr_mask_t addr_mask = mem_exist_addr_q[ral_name][
                    $urandom_range(0, mem_exist_addr_q[ral_name].size - 1)];
 
-              // TODO, Remove this if condition when #5262 is solved
-              // Only read when it's fully written
-              if (addr_mask.mask == '1) begin
-                addr = addr_mask.addr;
-                if (get_mem_access_by_addr(local_ral, addr) != "WO") begin
-                  bit completed, saw_err;
-                  mask = get_rand_contiguous_mask(addr_mask.mask);
-                  tl_access_w_abort(.addr(addr), .write(0), .data(data),
-                                    .completed(completed), .saw_err(saw_err),
-                                    .mask(mask), .blocking(1),
-                                    .req_abort_pct($urandom_range(0, 100)),
-                                    .tl_sequencer_h(p_sequencer.tl_sequencer_hs[ral_name]));
-                end
+              addr = addr_mask.addr;
+              if (get_mem_access_by_addr(local_ral, addr) != "WO") begin
+                bit completed, saw_err;
+                mask = get_rand_contiguous_mask(addr_mask.mask);
+                // set check_rsp to 0 due to a reason above (in the write section)
+                tl_access_w_abort(.addr(addr), .write(0), .data(data),
+                                  .completed(completed), .saw_err(saw_err),
+                                  .mask(mask), .blocking(1), .check_rsp(0),
+                                  .req_abort_pct($urandom_range(0, 100)),
+                                  .tl_sequencer_h(p_sequencer.tl_sequencer_hs[ral_name]));
               end
             end
           endcase

@@ -193,6 +193,26 @@ cc_test(
 )
 
 cc_library(
+    name = "csrng_shared",
+    srcs = [
+        "autogen/dif_csrng_autogen.h",
+        "dif_csrng_shared.c",
+    ],
+    hdrs = [
+        "dif_csrng.h",
+        "dif_csrng_shared.h",
+    ],
+    visibility = ["//visibility:private"],
+    deps = [
+        ":base",
+        "//sw/device/lib/base:bitfield",
+        "//sw/device/lib/base:macros",
+        "//sw/device/lib/base:memory",
+        "//sw/device/lib/base:mmio",
+    ],
+)
+
+cc_library(
     name = "csrng",
     srcs = [
         "autogen/dif_csrng_autogen.c",
@@ -204,6 +224,7 @@ cc_library(
     ],
     deps = [
         ":base",
+        ":csrng_shared",
         "//hw/ip/csrng/data:csrng_regs",
         "//sw/device/lib/base:bitfield",
         "//sw/device/lib/base:macros",
@@ -238,6 +259,7 @@ cc_library(
     ],
     deps = [
         ":base",
+        ":csrng_shared",
         "//hw/ip/edn/data:edn_regs",
         "//sw/device/lib/base:bitfield",
         "//sw/device/lib/base:macros",
@@ -251,6 +273,7 @@ cc_test(
     name = "edn_unittest",
     srcs = [
         "autogen/dif_edn_autogen_unittest.cc",
+        "dif_edn_unittest.cc",
     ],
     deps = [
         ":edn",
@@ -384,6 +407,7 @@ cc_test(
     name = "hmac_unittest",
     srcs = [
         "autogen/dif_hmac_autogen_unittest.cc",
+        "dif_hmac_unittest.cc",
     ],
     deps = [
         ":hmac",
@@ -799,6 +823,37 @@ cc_test(
 )
 
 cc_library(
+    name = "rv_core_ibex",
+    srcs = [
+        "autogen/dif_rv_core_ibex_autogen.c",
+        "autogen/dif_rv_core_ibex_autogen.h",
+        "dif_rv_core_ibex.c",
+    ],
+    hdrs = [
+        "dif_rv_core_ibex.h",
+    ],
+    deps = [
+        ":base",
+        "//hw/ip/rv_core_ibex/data:rv_core_ibex_regs",
+        "//hw/top_earlgrey/sw/autogen:top_earlgrey",
+        "//sw/device/lib/base:mmio",
+    ],
+)
+
+cc_test(
+    name = "rv_core_ibex_unittest",
+    srcs = [
+        "autogen/dif_rv_core_ibex_autogen_unittest.cc",
+        "dif_rv_core_ibex_unittest.cc",
+    ],
+    deps = [
+        ":rv_core_ibex",
+        ":test_base",
+        "@googletest//:gtest_main",
+    ],
+)
+
+cc_library(
     name = "rv_plic",
     srcs = [
         "autogen/dif_rv_plic_autogen.c",
@@ -1007,6 +1062,7 @@ cc_library(
     srcs = [
         "autogen/dif_sysrst_ctrl_autogen.c",
         "autogen/dif_sysrst_ctrl_autogen.h",
+        "dif_sysrst_ctrl.c",
     ],
     hdrs = [
         "dif_sysrst_ctrl.h",
@@ -1026,6 +1082,7 @@ cc_test(
     name = "sysrst_ctrl_unittest",
     srcs = [
         "autogen/dif_sysrst_ctrl_autogen_unittest.cc",
+        "dif_sysrst_ctrl_unittest.cc",
     ],
     deps = [
         ":sysrst_ctrl",
@@ -1092,6 +1149,7 @@ cc_test(
     name = "usbdev_unittest",
     srcs = [
         "autogen/dif_usbdev_autogen_unittest.cc",
+        "dif_usbdev_unittest.cc",
     ],
     deps = [
         ":test_base",

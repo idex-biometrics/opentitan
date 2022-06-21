@@ -11,11 +11,11 @@ use std::time::Duration;
 use structopt::StructOpt;
 
 use opentitanlib::app::command::CommandDispatch;
-use opentitanlib::app::TransportWrapper;
+use opentitanlib::app::{self, TransportWrapper};
 use opentitanlib::transport::cw310;
 use opentitanlib::util::rom_detect::RomKind;
 
-/// Read data from a SPI EEPROM.
+/// Load a bitstream into the FPGA.
 #[derive(Debug, StructOpt)]
 pub struct LoadBitstream {
     #[structopt(name = "FILE")]
@@ -30,7 +30,7 @@ pub struct LoadBitstream {
     pub rom_kind: Option<RomKind>,
     #[structopt(long, parse(try_from_str=humantime::parse_duration), default_value="50ms", help = "Duration of the reset pulse.")]
     pub rom_reset_pulse: Duration,
-    #[structopt(long, parse(try_from_str=humantime::parse_duration), default_value="1s", help = "Duration of ROM detection timeout")]
+    #[structopt(long, parse(try_from_str=humantime::parse_duration), default_value="2s", help = "Duration of ROM detection timeout")]
     pub rom_timeout: Duration,
 }
 
@@ -41,11 +41,18 @@ impl CommandDispatch for LoadBitstream {
         transport: &TransportWrapper,
     ) -> Result<Option<Box<dyn Serialize>>> {
         log::info!("Loading bitstream: {:?}", self.filename);
-        Ok(transport.dispatch(&cw310::FpgaProgram {
-            bitstream: fs::read(&self.filename)?,
+        let bitstream = fs::read(&self.filename)?;
+        let progress = app::progress_bar(bitstream.len() as u64);
+        let pfunc = Box::new(move |_, chunk| {
+            progress.inc(chunk as u64);
+        });
+        let operation = cw310::FpgaProgram {
+            bitstream: bitstream,
             rom_kind: self.rom_kind,
             rom_reset_pulse: self.rom_reset_pulse,
             rom_timeout: self.rom_timeout,
-        })?)
+            progress: Some(pfunc),
+        };
+        Ok(transport.dispatch(&operation)?)
     }
 }

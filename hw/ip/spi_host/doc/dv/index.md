@@ -48,6 +48,7 @@ The following utilities provide generic helper tasks and functions to perform ac
   parameter int NumCS = 1;
 ```
 Currently there verification only covers NumCS = 1 since this is the configuration that will be used in tapeout.
+Endianess implemented and verified is only Little Endian with ByteOrder set to 1
 
 ### Global types & methods
 All common types and methods defined at the package level can be found in
@@ -126,6 +127,47 @@ All common types and methods defined at the package level can be found in
     bit [15:8]   rx_qd;
     bit [7:0]    tx_qd;
   } spi_host_status_t;
+
+  typedef struct packed{
+    bit csidinval;
+    bit cmdinval;
+    bit underflow;
+    bit overflow;
+    bit cmdbusy;
+  } spi_host_error_enable_t;
+
+  typedef struct packed{
+    bit accessinval;
+    bit csidinval;
+    bit cmdinval;
+    bit underflow;
+    bit overflow;
+    bit cmdbusy;
+  } spi_host_error_status_t;
+
+  typedef struct packed{
+    bit idle;
+    bit ready;
+    bit txwm;
+    bit rxwm;
+    bit txempty;
+    bit rxfull;
+  } spi_host_event_enable_t;
+
+  typedef struct{
+    bit spi_event;
+    bit error;
+  } spi_host_intr_state_t;
+
+  typedef struct{
+    bit spi_event;
+    bit error;
+  } spi_host_intr_enable_t;
+
+  typedef struct{
+    bit spi_event;
+    bit error;
+  } spi_host_intr_test_t;
 ```
 
 ### TL_agent
@@ -170,7 +212,7 @@ Some of the most commonly used tasks / functions are as follows:
 * generate_transaction()
 
   Generates a SPI transaction of n segments with command, address, dummy and data segements
-  
+
 * read_rx_fifo()
 
   Read available data in the RX fifo

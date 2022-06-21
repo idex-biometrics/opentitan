@@ -67,8 +67,8 @@ module rstmgr_bind;
       clk_io_div4_i,
       clk_io_div4_i,
       clk_io_div4_i,
+      clk_aon_i,
       clk_usb_i,
-      clk_io_div4_i,
       clk_io_div2_i,
       clk_io_i,
       clk_io_div4_i
@@ -80,7 +80,7 @@ module rstmgr_bind;
       rst_en_o.i2c2[1] == prim_mubi_pkg::MuBi4True,
       rst_en_o.i2c1[1] == prim_mubi_pkg::MuBi4True,
       rst_en_o.i2c0[1] == prim_mubi_pkg::MuBi4True,
-      rst_en_o.usbif[1] == prim_mubi_pkg::MuBi4True,
+      rst_en_o.usb_aon[1] == prim_mubi_pkg::MuBi4True,
       rst_en_o.usb[1] == prim_mubi_pkg::MuBi4True,
       rst_en_o.spi_host1[1] == prim_mubi_pkg::MuBi4True,
       rst_en_o.spi_host0[1] == prim_mubi_pkg::MuBi4True,
@@ -90,7 +90,7 @@ module rstmgr_bind;
       resets_o.rst_i2c2_n[1],
       resets_o.rst_i2c1_n[1],
       resets_o.rst_i2c0_n[1],
-      resets_o.rst_usbif_n[1],
+      resets_o.rst_usb_aon_n[1],
       resets_o.rst_usb_n[1],
       resets_o.rst_spi_host1_n[1],
       resets_o.rst_spi_host0_n[1],
@@ -98,9 +98,4 @@ module rstmgr_bind;
     })
   );
 
-  // sec cm coverage bind
-  bind rstmgr cip_mubi_cov_if #(.Width(prim_mubi_pkg::MuBi4Width)) u_scanmode_mubi_cov_if (
-    .rst_ni (rst_ni),
-    .mubi   (scanmode_i)
-  );
 endmodule

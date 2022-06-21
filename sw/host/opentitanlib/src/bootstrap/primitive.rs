@@ -92,7 +92,9 @@ pub struct Primitive {
 }
 
 impl Primitive {
-    const INTER_FRAME_DELAY: Duration = Duration::from_millis(20);
+    // Imperically, a 50ms IFD improves console itegrity and fixes bootstrap for a slower, Bazel
+    // built Test ROM.
+    const INTER_FRAME_DELAY: Duration = Duration::from_millis(50);
     const FLASH_ERASE_DELAY: Duration = Duration::from_millis(200);
 
     /// Creates a new `Primitive` protocol updater from `options`.
@@ -127,6 +129,7 @@ impl UpdateProtocol for Primitive {
         container: &Bootstrap,
         transport: &TransportWrapper,
         payload: &[u8],
+        progress: &dyn Fn(u32, u32),
     ) -> Result<()> {
         let spi = container.spi_params.create(transport)?;
 
@@ -142,6 +145,7 @@ impl UpdateProtocol for Primitive {
             );
 
             // Write the frame and read back the hash of the previous frame.
+            progress(frame.header.flash_offset, frame.data.len() as u32);
             let mut prev_hash = [0u8; std::mem::size_of::<Frame>()];
             spi.run_transaction(&mut [Transfer::Both(frame.as_bytes(), &mut prev_hash)])?;
 

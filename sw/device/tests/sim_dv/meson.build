@@ -80,6 +80,30 @@ sw_tests += {
   }
 }
 
+# Sysrst_ctrl Tests
+sysrst_ctrl_reset_test_lib = declare_dependency(
+  link_with: static_library(
+    'sysrst_ctrl_reset_test_lib',
+    sources: ['sysrst_ctrl_reset_test.c'],
+    dependencies: [
+      sw_lib_dif_pinmux,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_dif_sysrst_ctrl,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_rstmgr_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'sysrst_ctrl_reset_test': {
+    'library': sysrst_ctrl_reset_test_lib,
+  }
+}
+
 # Keymgr Tests
 keymgr_key_derivation_test_lib = declare_dependency(
   link_with: static_library(
@@ -119,6 +143,7 @@ lc_ctrl_transition_test_impl_lib = declare_dependency(
       sw_lib_mmio,
       sw_lib_runtime_hart,
       sw_lib_runtime_log,
+      sw_lib_testing_lc_ctrl_testutils,
       top_earlgrey,
     ],
   ),
@@ -156,10 +181,78 @@ sw_tests += {
   }
 }
 
+lc_walkthrough_test_lib = declare_dependency(
+  link_with: static_library(
+    'lc_walkthrough_test_lib',
+    sources: [
+      'lc_walkthrough_test.c',
+    ],
+    dependencies: [
+      sw_lib_dif_lc_ctrl,
+      sw_lib_dif_otp_ctrl,
+      sw_lib_dif_rstmgr,
+      sw_lib_mmio,
+      sw_lib_runtime_hart,
+      sw_lib_runtime_log,
+      sw_lib_testing_otp_ctrl_testutils,
+      sw_lib_testing_lc_ctrl_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'lc_walkthrough_test': {
+    'library': lc_walkthrough_test_lib,
+  }
+}
+
+lc_walkthrough_testunlocks_test_lib = declare_dependency(
+  link_with: static_library(
+    'lc_walkthrough_testunlocks_test_lib',
+    sources: [
+      'lc_walkthrough_testunlocks_test.c',
+    ],
+    dependencies: [
+      sw_lib_dif_lc_ctrl,
+      sw_lib_dif_otp_ctrl,
+      sw_lib_dif_rstmgr,
+      sw_lib_mmio,
+      sw_lib_runtime_hart,
+      sw_lib_runtime_log,
+      sw_lib_testing_otp_ctrl_testutils,
+      sw_lib_testing_lc_ctrl_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'lc_walkthrough_testunlocks_test': {
+    'library': lc_walkthrough_testunlocks_test_lib,
+  }
+}
+
 pwrmgr_main_power_glitch_test_lib = declare_dependency(
   link_with: static_library(
     'pwrmgr_main_power_glitch_test_lib',
     sources: ['pwrmgr_main_power_glitch_test.c'],
+    dependencies: [
+      sw_lib_dif_rstmgr,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_rstmgr_testutils,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_main_power_glitch_test': {
+    'library': pwrmgr_main_power_glitch_test_lib,
+  }
+}
+
+pwrmgr_deep_sleep_power_glitch_test_lib = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_deep_sleep_power_glitch_test_lib',
+    sources: ['pwrmgr_deep_sleep_power_glitch_test.c'],
     dependencies: [
       sw_lib_dif_pwrmgr,
       sw_lib_dif_rstmgr,
@@ -171,8 +264,224 @@ pwrmgr_main_power_glitch_test_lib = declare_dependency(
   ),
 )
 sw_tests += {
-  'pwrmgr_main_power_glitch_test': {
-    'library': pwrmgr_main_power_glitch_test_lib,
+  'pwrmgr_deep_sleep_power_glitch_test': {
+    'library': pwrmgr_deep_sleep_power_glitch_test_lib,
+  }
+}
+
+pwrmgr_sleep_power_glitch_test_lib = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_sleep_power_glitch_test_lib',
+    sources: ['pwrmgr_sleep_power_glitch_test.c'],
+    dependencies: [
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_rstmgr_testutils,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_sleep_power_glitch_test': {
+    'library': pwrmgr_sleep_power_glitch_test_lib,
+  }
+}
+
+pwrmgr_deep_sleep_all_wake_ups_lib = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_deep_sleep_all_wake_ups_lib',
+    sources: [
+      hw_ip_pwrmgr_reg_h,
+      'pwrmgr_deep_sleep_all_wake_ups.c'],
+    dependencies: [
+      sw_lib_usb,
+      sw_lib_mmio,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rv_plic,
+      sw_lib_dif_sysrst_ctrl,
+      sw_lib_dif_adc_ctrl,
+      sw_lib_dif_pinmux,
+      sw_lib_irq,
+      sw_lib_runtime_ibex,
+      sw_lib_runtime_log,
+      sw_lib_testing_isr_testutils,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_aon_timer_testutils,
+      sw_lib_testing_rv_plic_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_deep_sleep_all_wake_ups': {
+    'library': pwrmgr_deep_sleep_all_wake_ups_lib,
+  }
+}
+
+pwrmgr_sysrst_ctrl_test_lib = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_sysrst_ctrl_test_lib',
+    sources: ['pwrmgr_sysrst_ctrl_test.c'],
+    dependencies: [
+      sw_lib_dif_aon_timer,
+      sw_lib_dif_flash_ctrl,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_dif_pinmux,
+      sw_lib_dif_sysrst_ctrl,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_pinmux_testutils,
+      sw_lib_testing_aon_timer_testutils,
+      sw_lib_testing_rstmgr_testutils,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_flash_ctrl_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_sysrst_ctrl_test': {
+    'library': pwrmgr_sysrst_ctrl_test_lib,
+  }
+}
+
+pwrmgr_random_sleep_all_reset_reqs_test = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_random_sleep_all_reset_reqs_test',
+    sources: [
+      hw_ip_rstmgr_reg_h,
+      'pwrmgr_random_sleep_all_reset_reqs_test.c',
+    ],
+    dependencies: [
+      sw_lib_dif_aon_timer,
+      sw_lib_dif_flash_ctrl,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_dif_pinmux,
+      sw_lib_dif_sysrst_ctrl,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_pinmux_testutils,
+      sw_lib_testing_aon_timer_testutils,
+      sw_lib_testing_rstmgr_testutils,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_flash_ctrl_testutils,
+      sw_lib_dif_alert_handler,
+      sw_lib_dif_rv_plic,
+      sw_lib_runtime_ibex,
+      sw_lib_testing_alert_handler_testutils,
+      sw_lib_testing_rv_plic_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_random_sleep_all_reset_reqs_test': {
+    'library': pwrmgr_random_sleep_all_reset_reqs_test,
+  }
+}
+
+pwrmgr_deep_sleep_all_reset_reqs_test = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_deep_sleep_all_reset_reqs_test',
+    sources: [
+      hw_ip_rstmgr_reg_h,
+      'pwrmgr_deep_sleep_all_reset_reqs_test.c',
+    ],
+    dependencies: [
+      sw_lib_dif_aon_timer,
+      sw_lib_dif_flash_ctrl,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_dif_pinmux,
+      sw_lib_dif_sysrst_ctrl,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_pinmux_testutils,
+      sw_lib_testing_aon_timer_testutils,
+      sw_lib_testing_rstmgr_testutils,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_flash_ctrl_testutils,
+      sw_lib_dif_alert_handler,
+      sw_lib_dif_rv_plic,
+      sw_lib_runtime_ibex,
+      sw_lib_testing_alert_handler_testutils,
+      sw_lib_testing_rv_plic_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_deep_sleep_all_reset_reqs_test': {
+    'library': pwrmgr_deep_sleep_all_reset_reqs_test,
+  }
+}
+
+pwrmgr_normal_sleep_all_reset_reqs_test = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_normal_sleep_all_reset_reqs_test',
+    sources: [
+      hw_ip_rstmgr_reg_h,
+      'pwrmgr_normal_sleep_all_reset_reqs_test.c',
+    ],
+    dependencies: [
+      sw_lib_dif_aon_timer,
+      sw_lib_dif_flash_ctrl,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_dif_pinmux,
+      sw_lib_dif_sysrst_ctrl,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_pinmux_testutils,
+      sw_lib_testing_aon_timer_testutils,
+      sw_lib_testing_rstmgr_testutils,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_flash_ctrl_testutils,
+      sw_lib_dif_alert_handler,
+      sw_lib_dif_rv_plic,
+      sw_lib_runtime_ibex,
+      sw_lib_testing_alert_handler_testutils,
+      sw_lib_testing_rv_plic_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_normal_sleep_all_reset_reqs_test': {
+    'library': pwrmgr_normal_sleep_all_reset_reqs_test,
+  }
+}
+
+pwrmgr_b2b_sleep_reset_test_lib = declare_dependency(
+  link_with: static_library(
+    'pwrmgr_b2b_sleep_reset_test_lib',
+    sources: [
+      hw_ip_aon_timer_reg_h,
+      'pwrmgr_b2b_sleep_reset_test.c'],
+    dependencies: [
+      sw_lib_dif_aon_timer,
+      sw_lib_dif_flash_ctrl,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_dif_pinmux,
+      sw_lib_dif_sysrst_ctrl,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_aon_timer_testutils,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_rstmgr_testutils,
+      sw_lib_testing_flash_ctrl_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'pwrmgr_b2b_sleep_reset_test': {
+    'library': pwrmgr_b2b_sleep_reset_test_lib,
   }
 }
 
@@ -340,3 +649,24 @@ sw_tests += {
   }
 }
 
+adc_ctrl_sleep_debug_cable_wakeup_test_lib = declare_dependency(
+  link_with: static_library(
+    'adc_ctrl_sleep_debug_cable_wakeup_test_lib',
+    sources: ['adc_ctrl_sleep_debug_cable_wakeup_test.c'],
+    dependencies: [
+      sw_lib_dif_adc_ctrl,
+      sw_lib_dif_pwrmgr,
+      sw_lib_dif_rstmgr,
+      sw_lib_mmio,
+      sw_lib_runtime_log,
+      sw_lib_testing_pwrmgr_testutils,
+      sw_lib_testing_rstmgr_testutils,
+      top_earlgrey,
+    ],
+  ),
+)
+sw_tests += {
+  'adc_ctrl_sleep_debug_cable_wakeup_test': {
+    'library': adc_ctrl_sleep_debug_cable_wakeup_test_lib,
+  }
+}

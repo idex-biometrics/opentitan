@@ -114,7 +114,7 @@
             items: [
                 {
                     name: "CREATOR_SW_CFG_AST_CFG",
-                    size: "128"
+                    size: "156"
                 }
                 {
                     name: "CREATOR_SW_CFG_AST_INIT_EN",
@@ -142,6 +142,26 @@
                 }
                 {
                     name: "CREATOR_SW_CFG_RNG_EN",
+                    size: "4"
+                }
+                {
+                    name: "CREATOR_SW_CFG_JITTER_EN",
+                    size: "4"
+                }
+                {
+                    name: "CREATOR_SW_CFG_RET_RAM_RESET_MASK",
+                    size: "4"
+                }
+                {
+                    name: "CREATOR_SW_CFG_MANUF_STATE",
+                    size: "4"
+                }
+                {
+                    name: "CREATOR_SW_CFG_ROM_EXEC_EN",
+                    size: "4"
+                }
+                {
+                    name: "CREATOR_SW_CFG_CPUCTRL",
                     size: "4"
                 }
             ],
@@ -206,6 +226,14 @@
                 }
                 {
                     name: "ROM_WATCHDOG_BITE_THRESHOLD_CYCLES",
+                    size: "4"
+                }
+                {
+                    name: "ROM_KEYMGR_ROM_EXT_MEAS_EN",
+                    size: "4"
+                }
+                {
+                    name: "OWNER_SW_CFG_MANUF_STATE",
                     size: "4"
                 }
             ],

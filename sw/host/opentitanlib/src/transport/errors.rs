@@ -35,10 +35,14 @@ pub enum TransportError {
     ReadError(String, String),
     #[error("FPGA programming failed: {0}")]
     FpgaProgramFailed(String),
+    #[error("PLL programming failed: {0}")]
+    PllProgramFailed(String),
     #[error("Invalid pin strapping name \"{0}\"")]
     InvalidStrappingName(String),
     #[error("Transport does not support the requested operation")]
     UnsupportedOperation,
+    #[error("Requested operation invalid at this time")]
+    InvalidOperation,
     #[error("Error communicating with FTDI: {0}")]
     FtdiError(String),
     #[error("Error communicating with debugger: {0}")]

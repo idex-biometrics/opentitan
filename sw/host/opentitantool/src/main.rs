@@ -26,12 +26,16 @@ enum RootCommandHierarchy {
     Console(command::console::Console),
 
     Gpio(command::gpio::GpioCommand),
+    Emulator(command::emulator::EmuCommand),
 
     I2c(command::i2c::I2cCommand),
     Image(command::image::Image),
+    SetPll(command::set_pll::SetPll),
     LoadBitstream(command::load_bitstream::LoadBitstream),
     NoOp(command::NoOp),
+    Rsa(command::rsa::Rsa),
     Spi(command::spi::SpiCommand),
+    Version(command::version::Version),
 
     // Flattened because `Greetings` is a subcommand hierarchy.
     #[cfg(feature = "demo_commands")]
@@ -125,16 +129,20 @@ fn parse_command_line(opts: Opts, mut args: ArgsOs) -> Result<Opts> {
 }
 
 // Print the result of a command.
-// If there is an error and `RUST_BACKTRACE=1` _and_ `--logging=debug`, print a backtrace.
+// If there is an error and `RUST_BACKTRACE=1`, print a backtrace.
 fn print_command_result(result: Result<Option<Box<dyn Serialize>>>) -> Result<()> {
     match result {
         Ok(Some(value)) => {
+            log::info!("Command result: success.");
             println!("{}", serde_json::to_string_pretty(&value)?);
             Ok(())
         }
-        Ok(None) => Ok(()),
+        Ok(None) => {
+            log::info!("Command result: success.");
+            Ok(())
+        }
         Err(e) => {
-            log::debug!("{:?}", e);
+            log::info!("Command result: {:?}", e);
             Err(e)
         }
     }

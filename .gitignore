@@ -19,11 +19,15 @@ hw/ip/*/sw
 # JasperGold FPV Result
 jgproject/
 
+# CDC result
+._dbname
+._idebug_exit_script
+idebugcfg.db
+idebugcfg.db-journal
+ivision.ws
+
 # FPGA splice intermediate files
 *.jou
-
-# Environment configuration (produced by Meson)
-.env
 
 # Simulation Results
 *.log
@@ -66,10 +70,7 @@ hw/top_englishbreakfast/ip/xbar_peri/xbar_peri.core
 # Rust Cargo build system files.
 Cargo.lock
 sw/host/**/target
-# We check this in to ensure the signing tool is built in a reproducible way
-# under meson, however, once the signing tool is integrated into opentitantool,
-# which is built with Bazel, this can be removed. See lowrisc/opentitan#10465.
-!sw/host/rom_ext_image_tools/signer/Cargo.lock
+rust-project.json
 
 # Bazel-related cache and output directories
 bazel-*

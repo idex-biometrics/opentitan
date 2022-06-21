@@ -11,12 +11,6 @@ class chip_stub_cpu_base_vseq extends chip_base_vseq;
   `uvm_object_new
 
   virtual task pre_start();
-    super.pre_start();
-    // Deselect JTAG interface.
-    if (cfg.jtag_riscv_map != null) cfg.tap_straps_vif.drive(SelectRVJtagTap);
-    else                            cfg.tap_straps_vif.drive(DeselectJtagTap);
-    enable_asserts_in_hw_reset_rand_wr = 0;
-
     // In top-level uart RX pin may be selected in pinmux. CSR tests may randomly enable line
     // loopback, which will connect TX with RX. If RX isn't enabled in pinmux, it will be 0.
     // moniter will start to check the TX data when it changes from 1 to 0. But the length of 0 may
@@ -24,13 +18,25 @@ class chip_stub_cpu_base_vseq extends chip_base_vseq;
     // In block-level, we always tie RX to 1 (idle) in CSR test so that we don't need to disable TX
     // monitor in block-level
     foreach (cfg.m_uart_agent_cfgs[i]) cfg.m_uart_agent_cfgs[i].en_tx_monitor = 0;
+
+    super.pre_start();
+    // Deselect JTAG interface.
+    if (cfg.jtag_riscv_map != null || cfg.use_jtag_dmi == 1) begin
+      cfg.tap_straps_vif.drive(SelectRVJtagTap);
+    end else begin
+      cfg.tap_straps_vif.drive(DeselectJtagTap);
+    end
+    enable_asserts_in_hw_reset_rand_wr = 0;
   endtask
 
   task post_start();
     super.post_start();
-    // Random CSR rw might trigger alert. Some alerts will conintuously be triggered until reset
-    // applied, which will cause alert_monitor phase_ready_to_end timeout.
-    apply_reset();
+
+    if (cfg.use_jtag_dmi == 0) begin
+      // Random CSR rw might trigger alert. Some alerts will conintuously be triggered until reset
+      // applied, which will cause alert_monitor phase_ready_to_end timeout.
+      apply_reset();
+    end
   endtask
 
   virtual task apply_reset(string kind = "HARD");
@@ -45,9 +51,11 @@ class chip_stub_cpu_base_vseq extends chip_base_vseq;
     // make sure jtag rst triggers
     cfg.tap_straps_vif.drive(SelectRVJtagTap);
     super.dut_init(reset_kind);
-    if (cfg.jtag_riscv_map == null) cfg.tap_straps_vif.drive(DeselectJtagTap);
+    if (cfg.jtag_riscv_map == null && cfg.use_jtag_dmi == 0) begin
+      cfg.tap_straps_vif.drive(DeselectJtagTap);
+    end
     // Program the AST with the configuration data loaded in OTP creator SW config region.
-    do_ast_cfg();
+    if (cfg.use_jtag_dmi == 0) do_ast_cfg();
   endtask
 
   // Write AST registers with the configuration data backdoor loaded into OTP creator SW cfg region.

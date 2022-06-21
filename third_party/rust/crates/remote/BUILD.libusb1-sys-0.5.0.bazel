@@ -20,7 +20,7 @@ load(
 package(default_visibility = [
     # Public for visibility by "@raze__crate__version//" targets.
     #
-    # Prefer access through "//third_party/cargo", which limits external
+    # Prefer access through "//third_party/rust/crates", which limits external
     # visibility to explicit Cargo.toml dependencies.
     "//visibility:public",
 ])
@@ -83,7 +83,7 @@ rust_library(
     # buildifier: leave-alone
     deps = [
         ":libusb1_sys_build_script",
-        "@raze__libc__0_2_124//:libc",
+        "@raze__libc__0_2_125//:libc",
     ],
 )
 

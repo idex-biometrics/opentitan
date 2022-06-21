@@ -13,7 +13,7 @@ path = "empty_file_to_appease_cargo.rs"
 # Keep sorted.
 # Please avoid version numbers that only have one component.
 [dependencies]
-anyhow = { version = "1.0.40", features=["backtrace"] }
+anyhow = { version = "1.0.57", features=["backtrace"] }
 bitflags = "1.0"
 byteorder = "1.4.3"
 deser-hjson = "1.0.2"
@@ -39,6 +39,7 @@ quote = "1.0"
 rand = "0.8.4"
 raw_tty = "0.1.0"
 regex = "1.5.4"
+rsa = "0.5.0"
 rusb = "0.8.1"
 serde = { version="1.0.130", features=["serde_derive"] }
 serde_json = "1.0.69"
@@ -51,11 +52,8 @@ thiserror = "1.0.24"
 typetag = "0.1"
 zerocopy = "0.5.0"
 
-# TODO(cfrantz): work with cr1901 to release 0.3.0.
-safe-ftdi = { git = "https://github.com/cr1901/safe-ftdi" }
-
 [workspace.metadata.raze]
-workspace_path = "//third_party/cargo"
+workspace_path = "//third_party/rust/crates"
 experimental_api = true
 package_aliases_dir = "."
 genmode = "Remote"
@@ -67,6 +65,6 @@ targets = [
 [package.metadata.raze.crates.libudev-sys.'0.1.4']
 gen_buildrs = true
 patches = [
-    "@//third_party/cargo/patches:libudev-sys-0.1.4.patch"
+    "@//third_party/rust/crates/patches:libudev-sys-0.1.4.patch"
 ]
 patch_args = ["-p1"]

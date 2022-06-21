@@ -306,7 +306,9 @@ package otp_ctrl_part_pkg;
     }),
     6400'({
       64'h39EB436F1D5AF2D7,
-      2304'h0, // unallocated space
+      2240'h0, // unallocated space
+      32'h0,
+      32'h0,
       32'h0,
       512'h0,
       128'h0,
@@ -321,7 +323,12 @@ package otp_ctrl_part_pkg;
     }),
     6400'({
       64'h7D7EA64D850E128D,
-      5056'h0, // unallocated space
+      4672'h0, // unallocated space
+      32'h0,
+      32'h0,
+      32'h0,
+      32'h0,
+      32'h0,
       32'h0,
       32'h0,
       32'h0,
@@ -329,7 +336,7 @@ package otp_ctrl_part_pkg;
       32'h0,
       32'h0,
       32'h0,
-      1024'h0
+      1248'h0
     }),
     512'({
       64'h1D00E175E3739EC1,

@@ -167,33 +167,31 @@ class rstmgr_base_vseq extends cip_base_vseq #(
 
   local task check_cpu_dump_info(cpu_crash_dump_t cpu_dump);
     `uvm_info(`gfn, "Checking cpu_info", UVM_MEDIUM)
-    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(8));
-    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.previous_valid),
-                 .err_msg("checking previous_valid"));
     csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(7));
-    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.previous.current_pc),
-                 .err_msg("checking previous current_pc"));
+    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.prev_valid),
+                 .err_msg("checking previous_valid"));
     csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(6));
-    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.previous.next_pc),
-                 .err_msg("checking previous next_pc"));
+    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.prev_exception_pc),
+                 .err_msg("checking previous exception_pc"));
     csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(5));
-    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.previous.last_data_addr),
-                 .err_msg("checking previous last_data_addr"));
-    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(4));
-    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.previous.exception_addr),
+    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.prev_exception_addr),
                  .err_msg("checking previous exception_addr"));
-    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(3));
+    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(4));
     csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.current.current_pc),
                  .err_msg("checking current current_pc"));
-    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(2));
+    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(3));
     csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.current.next_pc),
                  .err_msg("checking current next_pc"));
-    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(1));
+    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(2));
     csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.current.last_data_addr),
                  .err_msg("checking current last_data_addr"));
+    csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(1));
+    csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.current.exception_pc),
+                 .err_msg("checking current exception_pc"));
     csr_wr(.ptr(ral.cpu_info_ctrl.index), .value(0));
     csr_rd_check(.ptr(ral.cpu_info), .compare_value(cpu_dump.current.exception_addr),
                  .err_msg("checking current exception_addr"));
+
   endtask
 
   local function void set_alert_dump_info(alert_crashdump_t alert_dump);
@@ -275,7 +273,7 @@ class rstmgr_base_vseq extends cip_base_vseq #(
     const sw_rst_t sw_rst_all_ones = '1;
     rstmgr_csr_wr_unpack(.ptr(ral.sw_rst_ctrl_n), .value(sw_rst_all_ones));
     rstmgr_csr_rd_check_unpack(.ptr(ral.sw_rst_ctrl_n), .compare_value(sw_rst_all_ones),
-                 .err_msg("Expected sw_rst_ctrl_n to be set"));
+                               .err_msg("Expected sw_rst_ctrl_n to be set"));
   endtask
 
   virtual protected task clear_sw_rst_ctrl_n_per_entry(int entry);
@@ -299,14 +297,12 @@ class rstmgr_base_vseq extends cip_base_vseq #(
               "regen=%b, ctrl_n=%b, expected=%b", sw_rst_regen, sw_rst_ctrl_n, exp_ctrl_n),
               UVM_MEDIUM)
     rstmgr_csr_rd_check_unpack(.ptr(ral.sw_rst_ctrl_n), .compare_value(exp_ctrl_n),
-                 .err_msg("Expected enabled updates in sw_rst_ctrl_n"));
+                               .err_msg("Expected enabled updates in sw_rst_ctrl_n"));
     if (erase_ctrl_n) clear_sw_rst_ctrl_n();
   endtask
 
-  virtual protected task check_sw_rst_ctrl_n_per_entry(sw_rst_t sw_rst_ctrl_n,
-                                                       sw_rst_t sw_rst_regen,
-                                                       bit erase_ctrl_n,
-                                                       int entry);
+  virtual protected task check_sw_rst_ctrl_n_per_entry(
+      sw_rst_t sw_rst_ctrl_n, sw_rst_t sw_rst_regen, bit erase_ctrl_n, int entry);
     sw_rst_t exp_ctrl_n;
 
     `uvm_info(`gfn, $sformatf("Set sw_rst_ctrl_n[%0d] to 0x%0x", entry, sw_rst_ctrl_n), UVM_MEDIUM)
@@ -315,9 +311,8 @@ class rstmgr_base_vseq extends cip_base_vseq #(
     // Allow for domain crossing delay.
     cfg.io_div2_clk_rst_vif.wait_clks(3);
     exp_ctrl_n = ~sw_rst_regen | sw_rst_ctrl_n;
-    `uvm_info(`gfn,
-              $sformatf("regen=%b, ctrl_n=%b, expected=%b",
-                        sw_rst_regen, sw_rst_ctrl_n, exp_ctrl_n),
+    `uvm_info(`gfn, $sformatf(
+              "regen=%b, ctrl_n=%b, expected=%b", sw_rst_regen, sw_rst_ctrl_n, exp_ctrl_n),
               UVM_MEDIUM)
     csr_rd_check(.ptr(ral.sw_rst_ctrl_n[entry]), .compare_value(exp_ctrl_n[entry]),
                  .err_msg($sformatf("Expected enabled updates in sw_rst_ctrl_n[%0d]", entry)));
@@ -452,8 +447,20 @@ class rstmgr_base_vseq extends cip_base_vseq #(
     join
   endtask
 
+  // Disable exclusions for RESET_REQ and SW_RST_CTRL_N: they are meant for full-chip only.
+  function void disable_unnecessary_exclusions();
+    csr_excl_item csr_excl = ral.get_excl_item();
+    `uvm_info(`gfn, "Dealing with exclusions", UVM_MEDIUM)
+    csr_excl.enable_excl(.obj("rstmgr_reg_block.reset_req"), .enable(1'b0));
+    for (int i = 0; i < rstmgr_reg_pkg::NumSwResets; i++) begin
+      csr_excl.enable_excl(.obj($sformatf("rstmgr_reg_block.sw_rst_ctrl_n_%0d", i)), .enable(1'b0));
+    end
+    csr_excl.print_exclusions(UVM_MEDIUM);
+  endfunction
+
   task pre_start();
     if (do_rstmgr_init) rstmgr_init();
+    disable_unnecessary_exclusions();
     super.pre_start();
     cfg.pwrmgr_rstmgr_sva_vif.check_rstreqs_en = 0;
   endtask
@@ -476,16 +483,14 @@ class rstmgr_base_vseq extends cip_base_vseq #(
   endtask
 
   // csr method wrapper for unpacked array registers
-  virtual task rstmgr_csr_rd_check_unpack(input  uvm_object     ptr[],
-                                          input        uvm_reg_data_t compare_value = 0,
-                                          input string err_msg = "");
+  virtual task rstmgr_csr_rd_check_unpack(
+      input uvm_object ptr[], input uvm_reg_data_t compare_value = 0, input string err_msg = "");
     foreach (ptr[i]) begin
-      csr_rd_check(.ptr(ptr[i]), .compare_value(compare_value[i]),
-                   .err_msg(err_msg));
+      csr_rd_check(.ptr(ptr[i]), .compare_value(compare_value[i]), .err_msg(err_msg));
     end
-  endtask // rstmgr_csr_rd_check_unpack
-  virtual task rstmgr_csr_wr_unpack(input uvm_object     ptr[],
-                                    input uvm_reg_data_t value);
+  endtask : rstmgr_csr_rd_check_unpack
+
+  virtual task rstmgr_csr_wr_unpack(input uvm_object ptr[], input uvm_reg_data_t value);
     foreach (ptr[i]) begin
       csr_wr(.ptr(ptr[i]), .value(value[i]));
     end

@@ -18,7 +18,14 @@ package chip_env_pkg;
   import dv_lib_pkg::*;
   import dv_utils_pkg::*;
   import flash_ctrl_pkg::*;
+  import jtag_pkg::*;
+  import jtag_agent_pkg::*;
   import jtag_riscv_agent_pkg::*;
+  import jtag_dmi_agent_pkg::*;
+  import rv_dm_regs_ral_pkg::*;
+  import rv_dm_debug_mem_ral_pkg::*;
+  import rv_dm_reg_pkg::NrHarts;
+  import rv_dm_reg_pkg::NumAlerts;
   import kmac_pkg::*;
   import lc_ctrl_state_pkg::*;
   import mem_bkdr_util_pkg::*;
@@ -58,10 +65,16 @@ package chip_env_pkg;
   parameter bit [TL_AW-1:0] SW_DV_TEST_STATUS_ADDR  = SW_DV_START_ADDR + 0;
   parameter bit [TL_AW-1:0] SW_DV_LOG_ADDR          = SW_DV_START_ADDR + 4;
 
-  typedef virtual pins_if #(NUM_GPIOS)  gpio_vif;
-  typedef virtual sw_logger_if          sw_logger_vif;
-  typedef virtual sw_test_status_if     sw_test_status_vif;
-  typedef virtual ast_supply_if         ast_supply_vif;
+  // LC token paramters
+  // LC sends two 64-bit msg as input token.
+  localparam uint TokenWidthBit  = kmac_pkg::MsgWidth * 2;
+  localparam uint TokenWidthByte = TokenWidthBit / 8;
+
+  typedef virtual pins_if #(NUM_GPIOS) gpio_vif;
+  typedef virtual sw_logger_if         sw_logger_vif;
+  typedef virtual sw_test_status_if    sw_test_status_vif;
+  typedef virtual ast_supply_if        ast_supply_vif;
+  typedef virtual ast_ext_clk_if       ast_ext_clk_vif;
 
   // Types of memories in the chip.
   //
@@ -98,7 +111,8 @@ package chip_env_pkg;
   typedef enum bit [1:0] {
     DeselectJtagTap = 2'b00,
     SelectLCJtagTap = 2'b01,
-    SelectRVJtagTap = 2'b10
+    SelectRVJtagTap = 2'b10,
+    SelectDftJtagTap = 2'b11
   } chip_tap_type_e;
 
   // Two status for LC JTAG to identify if LC state transition is successful.

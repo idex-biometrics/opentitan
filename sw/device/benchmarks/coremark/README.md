@@ -2,6 +2,8 @@
 title: "CoreMark Benchmark"
 ---
 
+TODO(lowRISC/opentitan[#12504](https://github.com/lowRISC/opentitan/issues/12504)): update instructions for Bazel builds.
+
 ## Building CoreMark
 
 To build CoreMark under meson:
@@ -12,10 +14,10 @@ cd "${REPO_TOP}"
 ninja -C build-out sw/device/benchmarks/coremark/coremark_export_${DEVICE}
 ```
 
-Where ${DEVICE} is one of 'sim_verilator' or 'fpga_nexysvideo'
+Where ${DEVICE} is one of 'sim_verilator' or 'fpga_cw310'
 
-This will give you a .bin and .elf file (suitable for either spiflash or
-giving directly to `--meminit` for Verilator) which can be found in
+This will give you a .bin and .elf file (suitable for either `opentitantool`
+or giving directly to `--meminit` for Verilator) which can be found in
 `build-bin/sw/device/fpga/benchmarks/coremark`
 
 ## CoreMark Options

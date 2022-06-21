@@ -40,7 +40,7 @@ class flash_ctrl_scoreboard #(
   uvm_tlm_analysis_fifo #(tl_seq_item)       eflash_tl_d_chan_fifo;
 
   // utility function to word-align an input TL address
-  function bit [TL_AW-1:0] word_align_addr(bit [TL_AW-1:0] addr);
+  function addr_t word_align_addr(addr_t addr);
     return {addr[TL_AW-1:2], 2'b00};
   endfunction
 
@@ -133,6 +133,7 @@ class flash_ctrl_scoreboard #(
 
   virtual task process_tl_access(tl_seq_item item, tl_channels_e channel, string ral_name);
     uvm_reg        csr;
+    string         csr_wr_name = "";
     bit            do_read_check = 1'b1;
     bit            write = item.is_write();
     uvm_reg_addr_t csr_addr = cfg.ral_models[ral_name].get_word_aligned_addr(item.a_addr);
@@ -141,6 +142,8 @@ class flash_ctrl_scoreboard #(
     bit            addr_phase_write = (write && channel == AddrChannel);
     bit            data_phase_read = (!write && channel == DataChannel);
     bit            data_phase_write = (write && channel == DataChannel);
+    flash_op_t     flash_op_cov;
+    bit            erase_req;
 
     // if access was to a valid csr, get the csr handle
     if ((is_mem_addr(
@@ -169,7 +172,7 @@ class flash_ctrl_scoreboard #(
           write_allowed(part, wr_addr);
           `uvm_info(`gfn, $sformatf("wr_access: 0x%0b wr_addr: 0x%0h", wr_access, wr_addr), UVM_LOW)
           if (wr_access) begin
-            cfg.write_data_all_part(part, wr_addr, item.a_data);
+            cfg.write_data_all_part(.part(part), .addr(wr_addr), .data(item.a_data));
           end
           if (idx_wr == num_wr) begin
             idx_wr = 0;
@@ -179,9 +182,10 @@ class flash_ctrl_scoreboard #(
         end else if (csr_addr inside {cfg.ral_models[ral_name].csr_addrs}) begin
           csr = cfg.ral_models[ral_name].default_map.get_reg_by_offset(csr_addr);
           `DV_CHECK_NE_FATAL(csr, null)
+          csr_wr_name = csr.get_name();
           void'(csr.predict(.value(item.a_data), .kind(UVM_PREDICT_WRITE), .be(item.a_mask)));
           `uvm_info(`gfn, $sformatf("SCB EXP FLASH REG: 0x%0h", csr_addr), UVM_HIGH)
-          if ((csr.get_name() == "control") && cfg.scb_check) begin
+          if ((csr_wr_name == "control") && cfg.scb_check) begin
             csr_rd(.ptr(ral.control), .value(data), .backdoor(1'b1));
             curr_op = get_field_val(ral.control.op, data);
             if (curr_op == 2) begin  //erase op
@@ -214,6 +218,34 @@ class flash_ctrl_scoreboard #(
               end
             end
           end
+          // coverage collection
+          case (csr_wr_name)
+            "control": begin
+               csr_rd(.ptr(ral.control), .value(data), .backdoor(1'b1));
+               curr_op = get_field_val(ral.control.op, data);
+               erase_sel = get_field_val(ral.control.erase_sel, data);
+               part_sel = get_field_val(ral.control.partition_sel, data);
+               info_sel = get_field_val(ral.control.info_sel, data);
+               part = calc_part(part_sel, info_sel);
+               flash_op_cov.partition  = part;
+               flash_op_cov.erase_type = erase_sel;
+               flash_op_cov.op = curr_op;
+               if (cfg.en_cov) begin
+                 cov.control_cg.sample(flash_op_cov);
+               end
+            end
+            "erase_suspend": begin
+               csr_rd(.ptr(ral.erase_suspend), .value(data), .backdoor(1'b1));
+               erase_req = get_field_val(ral.erase_suspend.req, data);
+               if (cfg.en_cov) begin
+                 cov.erase_susp_cg.sample(erase_req);
+               end
+            end
+            default: begin
+            // TODO: Uncomment once func cover is implemented
+            // `uvm_info(`gfn, $sformatf("Not for func coverage: %0s", csr.get_full_name()))
+            end
+          endcase
         end
       end
 
@@ -251,6 +283,12 @@ class flash_ctrl_scoreboard #(
           if (do_read_check) begin
             `DV_CHECK_EQ(csr.get_mirrored_value(), item.d_data, $sformatf(
                          "reg name: %0s", csr.get_full_name()))
+            if (csr.get_name() == "err_code") begin
+              csr_rd(.ptr(ral.err_code), .value(data), .backdoor(1));
+              if (cfg.en_cov) begin
+                cov.error_cg.sample(data);
+              end
+            end
           end
           void'(csr.predict(.value(item.d_data), .kind(UVM_PREDICT_READ)));
         end else if (is_mem_addr(item, ral_name) && cfg.scb_check) begin  // rd fifo
@@ -299,6 +337,9 @@ class flash_ctrl_scoreboard #(
     `DV_EOT_PRINT_TLM_FIFO_CONTENTS(tl_seq_item, eflash_tl_a_chan_fifo)
     `DV_EOT_PRINT_TLM_FIFO_CONTENTS(tl_seq_item, eflash_tl_d_chan_fifo)
     `DV_CHECK_EQ(eflash_addr_phase_queue.size, 0)
+    if (cfg.scb_check && cfg.check_full_scb_mem_model) begin
+      cfg.check_mem_model();
+    end
   endfunction
 
   virtual function flash_dv_part_e calc_part(bit part_sel, bit [1:0] info_sel);
@@ -316,8 +357,8 @@ class flash_ctrl_scoreboard #(
     end
   endfunction
 
-  virtual function void check_rd_data(flash_dv_part_e part, bit [TL_AW-1:0] addr,
-                                      ref bit [TL_DW-1:0] data);
+  virtual function void check_rd_data(flash_dv_part_e part, addr_t addr,
+                                      ref data_t data);
     case (part)
       FlashPartData: begin
         check_rd_part(cfg.scb_flash_data, addr, data);
@@ -335,7 +376,7 @@ class flash_ctrl_scoreboard #(
     endcase
   endfunction
 
-  virtual function void erase_data(flash_dv_part_e part, bit [TL_AW-1:0] addr, bit sel);
+  virtual function void erase_data(flash_dv_part_e part, addr_t addr, bit sel);
     case (part)
       FlashPartData: begin
         erase_page_bank(NUM_BK_DATA_WORDS, addr, sel, cfg.scb_flash_data);
@@ -365,7 +406,7 @@ class flash_ctrl_scoreboard #(
 
   endfunction
 
-  virtual task write_allowed(ref flash_dv_part_e part, ref bit [TL_AW-1:0] in_addr);
+  virtual task write_allowed(ref flash_dv_part_e part, ref addr_t in_addr);
     bit en;
     bit prog_en;
     bit prog_en_def;
@@ -426,7 +467,7 @@ class flash_ctrl_scoreboard #(
     endcase
   endtask
 
-  virtual task read_allowed(ref flash_dv_part_e part, ref bit [TL_AW-1:0] in_rd_addr);
+  virtual task read_allowed(ref flash_dv_part_e part, ref addr_t in_rd_addr);
     bit en;
     bit read_en;
     bit read_en_def;
@@ -487,7 +528,7 @@ class flash_ctrl_scoreboard #(
   endtask
 
   virtual task erase_allowed(ref flash_dv_part_e part, bit erase_sel,
-                             ref bit [TL_AW-1:0] in_erase_addr, bit [1:0] bk_en);
+                             ref addr_t in_erase_addr, bit [1:0] bk_en);
     bit en;
     bit erase_en;
     bit erase_en_def;
@@ -511,7 +552,7 @@ class flash_ctrl_scoreboard #(
               base = get_field_val(ral.mp_region[i].base, data);
               size = get_field_val(ral.mp_region[i].size, data);
               if (in_erase_addr
-                  inside {[base*BytesPerPage:base*BytesPerPage+size*BytesPerPage]}) begin
+                  inside {[base*BytesPerPage:base*BytesPerPage+size*BytesPerPage-1]}) begin
                 if (en) begin
                   erase_access       = erase_en;
                   erase_access_found = 1'b1;
@@ -552,8 +593,8 @@ class flash_ctrl_scoreboard #(
     end
   endtask
 
-  virtual function void check_rd_part(const ref data_t exp_data_part[addr_t],
-                                      bit [TL_AW-1:0] addr, ref bit [TL_DW-1:0] data);
+  virtual function void check_rd_part(const ref data_model_t exp_data_part,
+                                      addr_t addr, ref data_t data);
     if (exp_data_part.exists(addr)) begin
       `uvm_info(
           `gfn, $sformatf(
@@ -616,8 +657,8 @@ class flash_ctrl_scoreboard #(
     end
   endtask
 
-  virtual function void erase_page_bank(int num_bk_words, bit [TL_AW-1:0] addr, bit sel,
-                                        ref data_t exp_part[addr_t]);
+  virtual function void erase_page_bank(int num_bk_words, addr_t addr, bit sel,
+                                        ref data_model_t exp_part);
     int num_wr;
     if (sel) begin  // bank sel
       num_wr = num_bk_words;

@@ -28,7 +28,7 @@ extern const size_t kOtbnIMemSizeBytes;
 /**
  * OTBN commands
  */
-typedef enum dif_otbn_cmd {
+typedef enum otbn_cmd {
   kOtbnCmdExecute = 0xd8,
   kOtbnCmdSecWipeDmem = 0xc3,
   kOtbnCmdSecWipeImem = 0x1e,
@@ -46,9 +46,29 @@ typedef enum otbn_status {
 } otbn_status_t;
 
 /**
- * Start the execution of the application loaded into OTBN.
+ * The following constants represent the expected number of sec_mmio register
+ * writes performed by functions in provided in this module. See
+ * `SEC_MMIO_WRITE_INCREMENT()` for more details.
+ *
+ * Example:
+ * ```
+ *  otbn_execute();
+ *  SEC_MMIO_WRITE_INCREMENT(kOtbnSecMMioExecute);
+ * ```
  */
-void otbn_execute(void);
+enum {
+  kOtbnSecMmioExecute = 1,
+  kOtbnSecMmioSetCtrlSwErrsFatal = 1,
+};
+
+/**
+ * Start the execution of the application loaded into OTBN.
+ *
+ * This function blocks until OTBN is idle.
+ *
+ * @return Result of the operation.
+ */
+rom_error_t otbn_execute(void);
 
 /**
  * Is OTBN busy executing an application?
@@ -92,6 +112,7 @@ typedef enum otbn_err_bits {
   kOtbnErrBitsLifecycleEscalation = (1 << 22),
   /** A FATAL_SOFTWARE error was observed. */
   kOtbnErrBitsFatalSoftware = (1 << 23),
+  kOtbnErrBitsLast = kOtbnErrBitsFatalSoftware,
 } otbn_err_bits_t;
 
 /**
@@ -99,7 +120,32 @@ typedef enum otbn_err_bits {
  *
  * @param[out] err_bits The error bits returned by the hardware.
  */
-void otbn_get_err_bits(otbn_err_bits_t *err_bits);
+void otbn_err_bits_get(otbn_err_bits_t *err_bits);
+
+/**
+ * Read OTBN's instruction count register.
+ *
+ * OTBN automatically calculates how many instructions are executed in a given
+ * program and writes the result to this register. Software can read it to
+ * verify that instructions were not unexpectedly skipped or added (for
+ * instance, due to fault injection attacks).
+ *
+ * Note that the OTBN hardware resets the instruction count register to 0 when
+ * the EXECUTE command is issued, so there is no need for software to reset the
+ * counter between programs.
+ *
+ * @return count the value from the instruction count register
+ */
+uint32_t otbn_instruction_count_get(void);
+
+/**
+ * Wipe IMEM securely.
+ *
+ * This function blocks until OTBN is idle.
+ *
+ * @return Result of the operation.
+ */
+rom_error_t otbn_imem_sec_wipe(void);
 
 /**
  * Write an OTBN application into its instruction memory (IMEM)
@@ -114,6 +160,15 @@ void otbn_get_err_bits(otbn_err_bits_t *err_bits);
  */
 rom_error_t otbn_imem_write(uint32_t offset_bytes, const uint32_t *src,
                             size_t len);
+
+/**
+ * Wipe DMEM securely.
+ *
+ * This function blocks until OTBN is idle.
+ *
+ * @return Result of the operation.
+ */
+rom_error_t otbn_dmem_sec_wipe(void);
 
 /**
  * Write to OTBN's data memory (DMEM)
@@ -154,10 +209,8 @@ void otbn_zero_dmem(void);
  * changed when the OTBN status is IDLE.
  *
  * @param enable Enable or disable whether software errors are fatal.
- * @return `kErrorOtbnUnavailable` if the requested change cannot be made or
- * `kErrorOk` otherwise.
  */
-rom_error_t otbn_set_ctrl_software_errs_fatal(bool enable);
+void otbn_set_ctrl_software_errs_fatal(bool enable);
 
 #ifdef __cplusplus
 }

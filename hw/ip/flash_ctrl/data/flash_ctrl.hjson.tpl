@@ -387,7 +387,7 @@
     },
 
     { name: "RegBusPgmResBytes",
-      desc: "Number of pages per bank",
+      desc: "Program resolution window in bytes",
       type: "int",
       default: "${cfg.pgm_resolution_bytes}",
       local: "true"
@@ -497,6 +497,12 @@
       desc:      "Maximum depth for read / program fifos",
       type:      "int"
       default:   "${max_fifo_depth}",
+    },
+
+    { name:      "MaxFifoWidth",
+      desc:      "Maximum depth for read / program fifos",
+      type:      "int"
+      default:   "${max_fifo_width}",
     },
   ],
 
@@ -838,7 +844,8 @@
                 name: "EN",
                 mubi: true,
                 desc: '''
-                  Region enabled, following fields apply
+                  Region enabled, following fields apply.
+                  If region is disabled, it is not matched against any incoming transaction.
                 ''',
                 resval: false
               },
@@ -1175,6 +1182,21 @@
         ]
       },
 
+      { name: "DEBUG_STATE",
+        desc: "Current flash fsm state",
+        swaccess: "ro",
+        hwaccess: "hwo",
+        hwext: "true"
+        fields: [
+          { bits: "10:0",
+            name: "lcmgr_state",
+            desc: "Current lcmgr interface staet ",
+            tags: [ // Bit changes immediately after start from reset value to 1b1 due to initialization
+            "excl:CsrAllTests:CsrExclAll"]
+          }
+        ]
+      },
+
       { name: "ERR_CODE",
         desc: '''
           Flash error code register.
@@ -1188,6 +1210,13 @@
         swaccess: "rw1c",
         hwaccess: "hwo",
         fields: [
+          { bits: "0",
+            name: "op_err",
+            desc: '''
+              Software has supplied an undefined operation.
+              See !!CONTROL.OP for list of valid operations.
+            '''
+          },
           { bits: "1",
             name: "mp_err",
             desc: '''
@@ -1308,6 +1337,12 @@
               Flash ctrl read/prog has encountered a count error.
             '''
           },
+          { bits: "8",
+            name: "fifo_err",
+            desc: '''
+              Flash primitive fifo's have encountered a count error.
+            '''
+          },
         ]
       },
 
@@ -1321,6 +1356,13 @@
         swaccess: "ro",
         hwaccess: "hrw",
         fields: [
+          { bits: "0",
+            name: "op_err",
+            desc: '''
+              The flash life cycle management interface has supplied an undefined operation.
+              See !!CONTROL.OP for list of valid operations.
+            '''
+          },
           { bits: "1",
             name: "mp_err",
             desc: '''

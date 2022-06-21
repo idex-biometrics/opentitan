@@ -81,6 +81,7 @@ module otbn_alu_bignum
   input logic rst_ni,
 
   input  alu_bignum_operation_t operation_i,
+  input  logic                  operation_valid_i,
   input  logic                  operation_commit_i,
   output logic [WLEN-1:0]       operation_result_o,
   output logic                  selection_flag_o,
@@ -91,16 +92,18 @@ module otbn_alu_bignum
   input  ispr_e                       ispr_addr_i,
   input  logic [31:0]                 ispr_base_wdata_i,
   input  logic [BaseWordsPerWLEN-1:0] ispr_base_wr_en_i,
-  input  logic [WLEN-1:0]             ispr_bignum_wdata_i,
+  input  logic [ExtWLEN-1:0]          ispr_bignum_wdata_intg_i,
   input  logic                        ispr_bignum_wr_en_i,
   input  logic                        ispr_wr_commit_i,
   input  logic                        ispr_init_i,
-  output logic [WLEN-1:0]             ispr_rdata_o,
+  output logic [ExtWLEN-1:0]          ispr_rdata_intg_o,
   input  logic                        ispr_rd_en_i,
 
-  input  logic [WLEN-1:0]             ispr_acc_i,
-  output logic [WLEN-1:0]             ispr_acc_wr_data_o,
+  input  logic [ExtWLEN-1:0]          ispr_acc_intg_i,
+  output logic [ExtWLEN-1:0]          ispr_acc_wr_data_intg_o,
   output logic                        ispr_acc_wr_en_o,
+
+  output logic                        reg_intg_violation_err_o,
 
   input logic                         sec_wipe_mod_urnd_i,
   input logic                         sec_wipe_zero_i,
@@ -133,7 +136,6 @@ module otbn_alu_bignum
   flags_t                              mac_update_flags;
   logic                                mac_update_flags_en;
   logic                                ispr_update_flags_en;
-  logic   [WLEN-1:0]                   ispr_rdata_mux_in [NIspr];
 
   logic [NIspr-1:0] expected_ispr_rd_en_onehot;
   logic [NIspr-1:0] expected_ispr_wr_en_onehot;
@@ -198,40 +200,70 @@ module otbn_alu_bignum
   end
 
 
-  logic [WLEN-1:0]             mod_q;
-  logic [WLEN-1:0]             mod_d;
+  logic [ExtWLEN-1:0]          mod_intg_q;
+  logic [ExtWLEN-1:0]          mod_intg_d;
   logic [BaseWordsPerWLEN-1:0] mod_ispr_wr_en;
   logic [BaseWordsPerWLEN-1:0] mod_wr_en;
 
-  logic [WLEN-1:0] ispr_mod_bignum_wdata_blanked;
+  logic [ExtWLEN-1:0] ispr_mod_bignum_wdata_intg_blanked;
 
   // SEC_CM: DATA_REG_SW.SCA
-  prim_blanker #(.Width(WLEN)) u_ispr_mod_bignum_wdata_blanker (
-    .in_i (ispr_bignum_wdata_i),
+  prim_blanker #(.Width(ExtWLEN)) u_ispr_mod_bignum_wdata_blanker (
+    .in_i (ispr_bignum_wdata_intg_i),
     .en_i (ispr_predec_bignum_i.ispr_wr_en[IsprMod]),
-    .out_o(ispr_mod_bignum_wdata_blanked)
+    .out_o(ispr_mod_bignum_wdata_intg_blanked)
   );
+  // If the blanker is enabled, the output will not carry the correct ECC bits.  This is not
+  // a problem because a blanked value should never be written to the register.  If the blanked
+  // value is written to the register nonetheless, an integrity error arises.
 
+  logic [WLEN-1:0]                mod_no_intg_d;
+  logic [WLEN-1:0]                mod_no_intg_q;
+  logic [ExtWLEN-1:0]             mod_intg_calc;
+  logic [2*BaseWordsPerWLEN-1:0]  mod_intg_err;
   for (genvar i_word = 0; i_word < BaseWordsPerWLEN; i_word++) begin : g_mod_words
+    prim_secded_inv_39_32_enc i_secded_enc (
+      .data_i (mod_no_intg_d[i_word*32+:32]),
+      .data_o (mod_intg_calc[i_word*39+:39])
+    );
+    prim_secded_inv_39_32_dec i_secded_dec (
+      .data_i     (mod_intg_q[i_word*39+:39]),
+      .data_o     (/* unused because we abort on any integrity error */),
+      .syndrome_o (/* unused */),
+      .err_o      (mod_intg_err[i_word*2+:2])
+    );
+    assign mod_no_intg_q[i_word*32+:32] = mod_intg_q[i_word*39+:32];
+
     always_ff @(posedge clk_i or negedge rst_ni) begin
       if (!rst_ni) begin
-        mod_q[i_word*32+:32] <= '0;
+        mod_intg_q[i_word*39+:39] <= EccZeroWord;
       end else if (mod_wr_en[i_word]) begin
-        mod_q[i_word*32+:32] <= mod_d[i_word*32+:32];
+        mod_intg_q[i_word*39+:39] <= mod_intg_d[i_word*39+:39];
       end
     end
 
     always_comb begin
-
+      mod_no_intg_d[i_word*32+:32] = '0;
       unique case (1'b1)
-        sec_wipe_mod_urnd_i: mod_d[i_word*32+:32] = urnd_data_i[i_word*32+:32];
-        sec_wipe_zero_i:     mod_d[i_word*32+:32] = 32'd0;
-        default:             mod_d[i_word*32+:32] = ispr_mod_bignum_wdata_blanked[i_word*32+:32];
+        // Non-encoded inputs have to be encoded before writing to the register.
+        sec_wipe_mod_urnd_i: begin
+          // In a secure wipe, `urnd_data_i` is written to the register before the zero word.  The
+          // ECC bits should not matter between the two writes, but nonetheless we encode
+          // `urnd_data_i` so there is no spurious integrity error.
+          mod_no_intg_d[i_word*32+:32] = urnd_data_i[i_word*32+:32];
+          mod_intg_d[i_word*39+:39]  = mod_intg_calc[i_word*39+:39];
+        end
+        // Pre-encoded inputs can directly be written to the register.
+        sec_wipe_zero_i: mod_intg_d[i_word*39+:39] = EccZeroWord;
+        default: mod_intg_d[i_word*39+:39] = ispr_mod_bignum_wdata_intg_blanked[i_word*39+:39];
       endcase
 
       unique case (1'b1)
-        ispr_init_i:               mod_d[i_word*32+:32] = '0;
-        ispr_base_wr_en_i[i_word]: mod_d[i_word*32+:32] = ispr_base_wdata_i;
+        ispr_init_i: mod_intg_d[i_word*39+:39] = EccZeroWord;
+        ispr_base_wr_en_i[i_word]: begin
+          mod_no_intg_d[i_word*32+:32] = ispr_base_wdata_i;
+          mod_intg_d[i_word*39+:39] = mod_intg_calc[i_word*39+:39];
+        end
         default: ;
       endcase
     end
@@ -252,39 +284,113 @@ module otbn_alu_bignum
   assign ispr_acc_wr_en_o   =
     ((ispr_addr_i == IsprAcc) & ispr_bignum_wr_en_i & ispr_wr_commit_i) | ispr_init_i;
 
-  logic [WLEN-1:0] ispr_acc_bignum_wdata_blanked;
+
+  logic [ExtWLEN-1:0] ispr_acc_bignum_wdata_intg_blanked;
 
   // SEC_CM: DATA_REG_SW.SCA
-  prim_blanker #(.Width(WLEN)) u_ispr_acc_bignum_wdata_blanker (
-    .in_i (ispr_bignum_wdata_i),
+  prim_blanker #(.Width(ExtWLEN)) u_ispr_acc_bignum_wdata_intg_blanker (
+    .in_i (ispr_bignum_wdata_intg_i),
     .en_i (ispr_predec_bignum_i.ispr_wr_en[IsprAcc]),
-    .out_o(ispr_acc_bignum_wdata_blanked)
+    .out_o(ispr_acc_bignum_wdata_intg_blanked)
   );
+  // If the blanker is enabled, the output will not carry the correct ECC bits.  This is not
+  // a problem because a blanked value should never be used.  If the blanked value is used
+  // nonetheless, an integrity error arises.
 
-  assign ispr_acc_wr_data_o = ispr_init_i ? '0 : ispr_acc_bignum_wdata_blanked;
+  assign ispr_acc_wr_data_intg_o = ispr_init_i ? EccWideZeroWord
+                                               : ispr_acc_bignum_wdata_intg_blanked;
 
-  assign ispr_rdata_mux_in[IsprMod]  = mod_q;
-  assign ispr_rdata_mux_in[IsprRnd]  = rnd_data_i;
-  assign ispr_rdata_mux_in[IsprUrnd] = urnd_data_i;
-  assign ispr_rdata_mux_in[IsprAcc]  = ispr_acc_i;
-  assign ispr_rdata_mux_in[IsprFlags] = {{(WLEN - (NFlagGroups * FlagsWidth)){1'b0}},
-                                         flags_flattened};
-  assign ispr_rdata_mux_in[IsprKeyS0L] = sideload_key_shares_i[0][255:0];
-  assign ispr_rdata_mux_in[IsprKeyS0H] = {{(WLEN - (SideloadKeyWidth - 256)){1'b0}},
-                                          sideload_key_shares_i[0][SideloadKeyWidth-1:256]};
-  assign ispr_rdata_mux_in[IsprKeyS1L] = sideload_key_shares_i[1][255:0];
-  assign ispr_rdata_mux_in[IsprKeyS1H] = {{(WLEN - (SideloadKeyWidth - 256)){1'b0}},
-                                          sideload_key_shares_i[1][SideloadKeyWidth-1:256]};
+  // ISPR read data is muxed out in two stages:
+  // 1. Select amongst the ISPRs that have no integrity bits. The output has integrity calculated
+  //    for it.
+  // 2. Select between the ISPRs that have integrity bits and the result of the first stage.
 
+  // Number of ISPRs that have integrity protection
+  localparam int NIntgIspr = 2;
+  // IDs fpr ISPRs with integrity
+  localparam int IsprModIntg = 0;
+  localparam int IsprAccIntg = 1;
+  // ID representing all ISPRs with no integrity
+  localparam int IsprNoIntg = 2;
+
+  logic [NIntgIspr:0] ispr_rdata_intg_mux_sel;
+  logic [ExtWLEN-1:0] ispr_rdata_intg_mux_in    [NIntgIspr+1];
+  logic [WLEN-1:0]    ispr_rdata_no_intg_mux_in [NIspr];
+
+  // First stage
+  // MOD and ACC supply their own integrity so these values are unused
+  assign ispr_rdata_no_intg_mux_in[IsprMod] = 0;
+  assign ispr_rdata_no_intg_mux_in[IsprAcc] = 0;
+
+  assign ispr_rdata_no_intg_mux_in[IsprRnd]    = rnd_data_i;
+  assign ispr_rdata_no_intg_mux_in[IsprUrnd]   = urnd_data_i;
+  assign ispr_rdata_no_intg_mux_in[IsprFlags]  = {{(WLEN - (NFlagGroups * FlagsWidth)){1'b0}},
+                                                 flags_flattened};
+  assign ispr_rdata_no_intg_mux_in[IsprKeyS0L] = sideload_key_shares_i[0][255:0];
+  assign ispr_rdata_no_intg_mux_in[IsprKeyS0H] = {{(WLEN - (SideloadKeyWidth - 256)){1'b0}},
+                                                  sideload_key_shares_i[0][SideloadKeyWidth-1:256]};
+  assign ispr_rdata_no_intg_mux_in[IsprKeyS1L] = sideload_key_shares_i[1][255:0];
+  assign ispr_rdata_no_intg_mux_in[IsprKeyS1H] = {{(WLEN - (SideloadKeyWidth - 256)){1'b0}},
+                                                  sideload_key_shares_i[1][SideloadKeyWidth-1:256]};
+
+  logic [WLEN-1:0]    ispr_rdata_no_intg;
+  logic [ExtWLEN-1:0] ispr_rdata_intg_calc;
+
+  // SEC_CM: DATA_REG_SW.SCA
   prim_onehot_mux #(
     .Width  (WLEN),
     .Inputs (NIspr)
-  ) u_ispr_rd_mux (
+  ) u_ispr_rdata_no_intg_mux (
     .clk_i,
     .rst_ni,
-    .in_i  (ispr_rdata_mux_in),
+    .in_i  (ispr_rdata_no_intg_mux_in),
     .sel_i (ispr_predec_bignum_i.ispr_rd_en),
-    .out_o (ispr_rdata_o)
+    .out_o (ispr_rdata_no_intg)
+  );
+
+  for (genvar i_word = 0; i_word < BaseWordsPerWLEN; i_word++) begin : g_rdata_enc
+    prim_secded_inv_39_32_enc i_secded_enc (
+      .data_i(ispr_rdata_no_intg[i_word * 32 +: 32]),
+      .data_o(ispr_rdata_intg_calc[i_word * 39 +: 39])
+    );
+  end
+
+  // Second stage
+  assign ispr_rdata_intg_mux_in[IsprModIntg] = mod_intg_q;
+  assign ispr_rdata_intg_mux_in[IsprAccIntg] = ispr_acc_intg_i;
+  assign ispr_rdata_intg_mux_in[IsprNoIntg]  = ispr_rdata_intg_calc;
+
+  assign ispr_rdata_intg_mux_sel[IsprModIntg] = ispr_predec_bignum_i.ispr_rd_en[IsprMod];
+  assign ispr_rdata_intg_mux_sel[IsprAccIntg] = ispr_predec_bignum_i.ispr_rd_en[IsprAcc];
+
+  assign ispr_rdata_intg_mux_sel[IsprNoIntg]  =
+    |{ispr_predec_bignum_i.ispr_rd_en[IsprKeyS1H:IsprKeyS0L],
+      ispr_predec_bignum_i.ispr_rd_en[IsprUrnd],
+      ispr_predec_bignum_i.ispr_rd_en[IsprFlags],
+      ispr_predec_bignum_i.ispr_rd_en[IsprRnd]};
+
+  // If we're reading from an ISPR we must be using the ispr_rdata_intg_mux
+  `ASSERT(IsprRDataIntgMuxSelIfIsprRd_A,
+    |ispr_predec_bignum_i.ispr_rd_en |-> |ispr_rdata_intg_mux_sel)
+
+  // If we're reading from MOD or ACC we must not take the read data from the calculated integrity
+  // path
+  `ASSERT(IsprModMustTakeIntg_A,
+    ispr_predec_bignum_i.ispr_rd_en[IsprMod] |-> !ispr_rdata_intg_mux_sel[IsprNoIntg])
+
+  `ASSERT(IsprAccMustTakeIntg_A,
+    ispr_predec_bignum_i.ispr_rd_en[IsprAcc] |-> !ispr_rdata_intg_mux_sel[IsprNoIntg])
+
+
+  prim_onehot_mux #(
+    .Width  (ExtWLEN),
+    .Inputs (NIntgIspr+1)
+  ) u_ispr_rdata_intg_mux (
+    .clk_i,
+    .rst_ni,
+    .in_i  (ispr_rdata_intg_mux_in),
+    .sel_i (ispr_rdata_intg_mux_sel),
+    .out_o (ispr_rdata_intg_o)
   );
 
   prim_onehot_enc #(
@@ -305,7 +411,7 @@ module otbn_alu_bignum
     .out_o (expected_ispr_wr_en_onehot)
   );
 
-  // SEC_CM: DATA_REG_SW.SCA
+  // SEC_CM: CTRL.REDUN
   assign ispr_predec_error_o =
     |{expected_ispr_rd_en_onehot != ispr_predec_bignum_i.ispr_rd_en,
       expected_ispr_wr_en_onehot != ispr_predec_bignum_i.ispr_wr_en};
@@ -414,7 +520,7 @@ module otbn_alu_bignum
     .out_o(adder_y_op_shifter_res_blanked)
   );
 
-  assign shift_mod_mux_out = shift_mod_sel ? adder_y_op_shifter_res_blanked : mod_q;
+  assign shift_mod_mux_out = shift_mod_sel ? adder_y_op_shifter_res_blanked : mod_no_intg_q;
 
   assign adder_y_op_a = {x_res_operand_a_mux_out, 1'b1};
   assign adder_y_op_b = {adder_y_op_b_invert ? ~shift_mod_mux_out : shift_mod_mux_out,
@@ -582,7 +688,7 @@ module otbn_alu_bignum
     endcase
   end
 
-  // SEC_CM: DATA_REG_SW.SCA
+  // SEC_CM: CTRL.REDUN
   assign alu_predec_error_o =
     |{expected_adder_x_en != alu_predec_bignum_i.adder_x_en,
       expected_adder_y_op_a_en != alu_predec_bignum_i.adder_y_op_a_en,
@@ -650,8 +756,10 @@ module otbn_alu_bignum
   // Output multiplexer //
   ////////////////////////
 
+  logic adder_y_res_used;
   always_comb begin
     operation_result_o = adder_y_res[WLEN:1];
+    adder_y_res_used = 1'b1;
 
     unique case(operation_i.op)
       AluOpBignumAdd,
@@ -659,6 +767,7 @@ module otbn_alu_bignum
       AluOpBignumSub,
       AluOpBignumSubb: begin
         operation_result_o = adder_y_res[WLEN:1];
+        adder_y_res_used = 1'b1;
       end
 
       // For pseudo-mod operations the result depends upon initial a + b / a - b result that is
@@ -674,8 +783,10 @@ module otbn_alu_bignum
       AluOpBignumAddm: begin
         if (adder_x_res[WLEN+1] || adder_y_res[WLEN+1]) begin
           operation_result_o = adder_y_res[WLEN:1];
+          adder_y_res_used = 1'b1;
         end else begin
           operation_result_o = adder_x_res[WLEN:1];
+          adder_y_res_used = 1'b0;
         end
       end
 
@@ -685,13 +796,16 @@ module otbn_alu_bignum
       AluOpBignumSubm: begin
         if (adder_x_res[WLEN+1]) begin
           operation_result_o = adder_x_res[WLEN:1];
+          adder_y_res_used = 1'b0;
         end else begin
           operation_result_o = adder_y_res[WLEN:1];
+          adder_y_res_used = 1'b1;
         end
       end
 
       AluOpBignumRshi: begin
         operation_result_o = shifter_res[WLEN-1:0];
+        adder_y_res_used = 1'b0;
       end
 
       AluOpBignumXor,
@@ -699,8 +813,24 @@ module otbn_alu_bignum
       AluOpBignumAnd,
       AluOpBignumNot: begin
         operation_result_o = logical_res;
+        adder_y_res_used = 1'b0;
       end
       default: ;
     endcase
   end
+
+  // Determine if `mod_intg_q` is used.  The control signals are only valid if `operation_i.op` is
+  // not none. If `shift_mod_sel` is low, `mod_intg_q` flows into `adder_y_op_b` and from there
+  // into `adder_y_res`.  In this case, `mod_intg_q` is used iff  `adder_y_res` flows into
+  // `operation_result_o`.
+  logic mod_used;
+  assign mod_used = operation_valid_i & (operation_i.op != AluOpBignumNone)
+                    & !shift_mod_sel & adder_y_res_used;
+  `ASSERT_KNOWN(ModUsed_A, mod_used)
+
+  // Raise a register integrity violation error iff `mod_intg_q` is used and (at least partially)
+  // invalid.
+  assign reg_intg_violation_err_o = mod_used & |(mod_intg_err);
+  `ASSERT_KNOWN(RegIntgErrKnown_A, reg_intg_violation_err_o)
+
 endmodule

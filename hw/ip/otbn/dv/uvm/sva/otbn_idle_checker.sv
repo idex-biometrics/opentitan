@@ -117,18 +117,26 @@ module otbn_idle_checker
           ((status_q_i == otbn_pkg::StatusLocked) && keys_busy) |->
           (idle_o_i == prim_mubi_pkg::MuBi4False))
   `ASSERT(IdleIfLockedAndNotRotatingKeys_A,
-          ((status_q_i == otbn_pkg::StatusLocked) && !keys_busy) |->
+          ((status_q_i == otbn_pkg::StatusLocked) && !keys_busy) |=>
           (idle_o_i == prim_mubi_pkg::MuBi4True))
 
   `ASSERT(NoStartKeyRotationWhenLocked_A,
-          (status_q_i == otbn_pkg::StatusLocked) |-> !$rose(keys_busy))
+          (status_q_i == otbn_pkg::StatusLocked) |=> !$rose(keys_busy))
 
   `ASSERT(OnlyKeyRotationWhenRunningOrLocked_A,
           keys_busy |-> (running_q || (status_q_i == otbn_pkg::StatusLocked)))
 
   `ASSERT(NotRunningWhenLocked_A,
-          !((status_q_i == otbn_pkg::StatusLocked) && running_q))
+          !((status_q_i == otbn_pkg::StatusLocked) && running_d))
 
-  `ASSERT(NoMemRdataWhenBusy_A, running_q |-> imem_rdata_bus == 'b0 && dmem_rdata_bus == 'b0)
+  // When OTBN locks bus read data integrity is forced to the correct value for 0 data (so reads to
+  // a locked OTBN don't cause an integrity error). There is a small window where running_q is set
+  // with status_q reporting 'StatusLocked'. So expected bus read data depends upon locked status
+  // when running.
+  `ASSERT(NoMemRdataWhenBusy_A,
+    running_q |-> ((status_q_i == otbn_pkg::StatusLocked) ?
+      imem_rdata_bus == EccZeroWord && dmem_rdata_bus == EccWideZeroWord :
+      imem_rdata_bus == 'b0 && dmem_rdata_bus == 'b0))
+
 
 endmodule

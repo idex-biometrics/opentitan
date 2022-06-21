@@ -20,29 +20,13 @@ class MockLifecycle : public global_mock::GlobalMock<MockLifecycle> {
   MOCK_METHOD(lifecycle_state_t, State, ());
   MOCK_METHOD(uint32_t, RawState, ());
   MOCK_METHOD(void, DeviceId, (lifecycle_device_id_t * device_id));
+  MOCK_METHOD(void, HwRev, (lifecycle_hw_rev_t * hw_rev));
 };
 
 }  // namespace internal
 
 using MockLifecycle = testing::StrictMock<internal::MockLifecycle>;
 
-#ifdef IS_MESON_FOR_MIGRATIONS_ONLY
-extern "C" {
-
-lifecycle_state_t lifecycle_state_get(void) {
-  return MockLifecycle::Instance().State();
-}
-
-uint32_t lifecycle_raw_state_get(void) {
-  return MockLifecycle::Instance().RawState();
-}
-
-void lifecycle_device_id_get(lifecycle_device_id_t *device_id) {
-  MockLifecycle::Instance().DeviceId(device_id);
-}
-
-}  // extern "C"
-#endif
 }  // namespace mask_rom_test
 
 #endif  // OPENTITAN_SW_DEVICE_SILICON_CREATOR_LIB_DRIVERS_MOCK_LIFECYCLE_H_

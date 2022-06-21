@@ -121,6 +121,8 @@ module spi_device
 
 
   // Submoule SRAM Requests
+  sram_l2m_t flash_sram_l2m;
+  sram_m2l_t flash_sram_m2l;
   sram_l2m_t sub_sram_l2m [IoModeEnd];
   sram_m2l_t sub_sram_m2l [IoModeEnd];
 
@@ -158,6 +160,7 @@ module spi_device
   logic       cmdfifo_rvalid, cmdfifo_rready;
   logic [7:0] cmdfifo_rdata;
   logic       cmdfifo_notempty;
+  logic       cmdfifo_set_pulse;
 
   logic        addrfifo_rvalid, addrfifo_rready;
   logic [31:0] addrfifo_rdata;
@@ -592,19 +595,19 @@ module spi_device
   );
 
   prim_edge_detector #(
-    .Width (3),
+    .Width (2),
     .EnSync(1'b 0)
   ) u_intr_upload_edge (
     .clk_i,
     .rst_ni,
 
-    .d_i               ({cmdfifo_notempty, payload_notempty, payload_overflow}),
+    .d_i               ({payload_notempty, payload_overflow}),
     .q_sync_o          (),
-    .q_posedge_pulse_o ({intr_upload_cmdfifo_not_empty,
-                         intr_upload_payload_not_empty,
+    .q_posedge_pulse_o ({intr_upload_payload_not_empty,
                          intr_upload_payload_overflow}),
     .q_negedge_pulse_o ()
   );
+  assign intr_upload_cmdfifo_not_empty = cmdfifo_set_pulse;
 
   prim_intr_hw #(.Width(1)) u_intr_cmdfifo_not_empty (
     .clk_i,
@@ -814,7 +817,9 @@ module spi_device
     .mubi_o(scanmode)
   );
 
-  prim_clock_inv u_clk_spi (
+  prim_clock_inv #(
+    .NoFpgaBufG(1'b1)
+  ) u_clk_spi (
     .clk_i(cio_sck_i),
     .clk_no(sck_n),
     .scanmode_i(prim_mubi_pkg::mubi4_test_true_strict(scanmode[ClkInvSel]))
@@ -833,7 +838,9 @@ module spi_device
     .clk_o(clk_spi_in_muxed)
   );
 
-  prim_clock_buf u_clk_spi_in_buf(
+  prim_clock_buf #(
+    .RegionSel(1'b1)
+  ) u_clk_spi_in_buf(
     .clk_i (clk_spi_in_muxed),
     .clk_o (clk_spi_in_buf)
   );
@@ -847,7 +854,9 @@ module spi_device
     .clk_o(clk_spi_out_muxed)
   );
 
-  prim_clock_buf u_clk_spi_out_buf(
+  prim_clock_buf #(
+    .RegionSel(1'b1)
+  ) u_clk_spi_out_buf(
     .clk_i (clk_spi_out_muxed),
     .clk_o (clk_spi_out_buf)
   );
@@ -918,7 +927,7 @@ module spi_device
   prim_clock_mux2 #(
     .NoFpgaBufG(1'b1)
   ) u_sram_clk_sel (
-    .clk0_i (clk_spi_in_muxed),
+    .clk0_i (clk_spi_in_buf),
     .clk1_i (clk_i),
     .sel_i  (spi_mode == FwMode),
     .clk_o  (sram_clk_ungated)
@@ -1022,6 +1031,39 @@ module spi_device
     else            cmd_dp_sel_outclk <= cmd_dp_sel;
   end
 
+  // SCK clock domain MUX for SRAM access for Flash and Passthrough
+  always_comb begin
+    flash_sram_l2m = '{ default: '0 };
+
+    for (int unsigned i = IoModeCmdParse ; i < IoModeEnd ; i++) begin
+      sub_sram_m2l[i] = '{
+        rvalid: 1'b 0,
+        rdata: '0,
+        rerror: '{uncorr: 1'b 0, corr: 1'b 0}
+      };
+    end
+
+    unique case (cmd_dp_sel)
+      DpReadCmd, DpReadSFDP: begin
+        // SRAM:: Remember this has glitch
+        // switch should happen only when clock gate is disabled.
+        flash_sram_l2m = sub_sram_l2m[IoModeReadCmd];
+        sub_sram_m2l[IoModeReadCmd] = flash_sram_m2l;
+      end
+
+      DpUpload: begin
+        flash_sram_l2m = sub_sram_l2m[IoModeUpload];
+        sub_sram_m2l[IoModeUpload] = flash_sram_m2l;
+      end
+
+      default: begin
+        // DpNone, DpReadStatus, DpReadJEDEC
+        flash_sram_l2m = '{default: '0 };
+      end
+    endcase
+  end
+
+  // inverted SCK clock domain MUX for IO Mode and P2S
   always_comb begin
     io_mode = SingleIO;
     p2s_valid = 1'b 0;
@@ -1029,13 +1071,18 @@ module spi_device
     sub_p2s_sent = '{default: 1'b 0};
 
     mem_b_l2m = '{ default: '0 };
-    for (int unsigned i = 0 ; i < IoModeEnd ; i++) begin
-      sub_sram_m2l[i] = '{
-        rvalid: 1'b 0,
-        rdata: '0,
-        rerror: '{uncorr: 1'b 0, corr: 1'b 0}
-      };
-    end
+
+    sub_sram_m2l[IoModeFw] = '{
+      rvalid: 1'b 0,
+      rdata: '0,
+      rerror: '{uncorr: 1'b 0, corr: 1'b 0}
+    };
+
+    flash_sram_m2l = '{
+      rvalid: 1'b 0,
+      rdata: '0,
+      rerror: '{uncorr: 1'b 0, corr: 1'b 0}
+    };
 
     unique case (spi_mode)
       FwMode: begin
@@ -1052,13 +1099,16 @@ module spi_device
       end
 
       FlashMode, PassThrough: begin
+        // SRAM comb logic is in SCK clock domain
+        mem_b_l2m = flash_sram_l2m;
+        flash_sram_m2l = mem_b_m2l;
+
         unique case (cmd_dp_sel_outclk)
           DpNone: begin
             io_mode = sub_iomode[IoModeCmdParse];
 
             sub_p2s_sent[IoModeCmdParse] = p2s_sent;
 
-            // Leave SRAM default;
           end
           DpReadCmd, DpReadSFDP: begin
             io_mode = sub_iomode[IoModeReadCmd];
@@ -1066,11 +1116,6 @@ module spi_device
             p2s_valid = sub_p2s_valid[IoModeReadCmd];
             p2s_data  = sub_p2s_data[IoModeReadCmd];
             sub_p2s_sent[IoModeReadCmd] = p2s_sent;
-
-            // SRAM:: Remember this has glitch
-            // switch should happen only when clock gate is disabled.
-            mem_b_l2m = sub_sram_l2m[IoModeReadCmd];
-            sub_sram_m2l[IoModeReadCmd] = mem_b_m2l;
           end
           DpReadStatus: begin
             io_mode = sub_iomode[IoModeStatus];
@@ -1079,7 +1124,6 @@ module spi_device
             p2s_data  = sub_p2s_data[IoModeStatus];
             sub_p2s_sent[IoModeStatus] = p2s_sent;
 
-            // default memory (tied)
           end
 
           DpReadJEDEC: begin
@@ -1096,9 +1140,6 @@ module spi_device
             p2s_valid = sub_p2s_valid[IoModeUpload];
             p2s_data  = sub_p2s_data[IoModeUpload];
             sub_p2s_sent[IoModeUpload] = p2s_sent;
-
-            mem_b_l2m = sub_sram_l2m[IoModeUpload];
-            sub_sram_m2l[IoModeUpload] = mem_b_m2l;
           end
           // DpUnknown:
           default: begin
@@ -1212,6 +1253,9 @@ module spi_device
     .rst_rxfifo_ni (rst_rxfifo_n),
     .clk_spi_out_i (clk_spi_out_buf),
     .rst_txfifo_ni (rst_txfifo_n),
+
+    // Mode
+    .spi_mode_i (spi_mode),
 
     .rxf_overflow_o  (rxf_overflow),
     .txf_underflow_o (txf_underflow),
@@ -1452,6 +1496,9 @@ module spi_device
     .sys_clk_i  (clk_i),
     .sys_rst_ni (rst_ni),
 
+    .clk_csb_i (clk_csb),
+
+    .sck_csb_asserted_pulse_i   (sck_csb_asserted_pulse),
     .sys_csb_deasserted_pulse_i (sys_csb_deasserted_pulse),
 
     .sel_dp_i (cmd_dp_sel),
@@ -1497,6 +1544,7 @@ module spi_device
 
     .set_busy_o (sck_status_busy_set),
 
+    .sys_cmdfifo_set_o       (cmdfifo_set_pulse),
     .sys_cmdfifo_notempty_o  (cmdfifo_notempty),
     .sys_cmdfifo_full_o      (), // not used
     .sys_addrfifo_notempty_o (addrfifo_notempty),

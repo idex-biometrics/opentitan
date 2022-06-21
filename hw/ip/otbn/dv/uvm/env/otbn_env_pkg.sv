@@ -7,6 +7,7 @@ package otbn_env_pkg;
   import uvm_pkg::*;
   import top_pkg::*;
   import dv_utils_pkg::*;
+  import csr_utils_pkg::*;
   import dv_lib_pkg::*;
   import dv_base_reg_pkg::*;
   import tl_agent_pkg::*;
@@ -52,7 +53,6 @@ package otbn_env_pkg;
   parameter int KEY_RSP_DATA_SIZE = $bits(otp_ctrl_pkg::otbn_otp_key_rsp_t);
 
   // typedefs
-  typedef virtual pins_if #(1)     idle_vif;
   typedef virtual otbn_escalate_if escalate_vif;
   typedef logic [TL_AIW-1:0]       tl_source_t;
   typedef key_sideload_agent#(keymgr_pkg::otbn_key_req_t) otbn_sideload_agent;
@@ -88,6 +88,12 @@ package otbn_env_pkg;
     bit [31:0]    data;
 
   } otbn_loaded_word;
+
+  // The mapping from EDN agent indices to RND / URND connections
+  typedef enum {
+    RndEdnIdx,
+    UrndEdnIdx
+  } edn_idx_e;
 
   typedef enum {
     StackEmpty,

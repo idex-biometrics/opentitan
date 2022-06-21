@@ -20,7 +20,7 @@ load(
 package(default_visibility = [
     # Public for visibility by "@raze__crate__version//" targets.
     #
-    # Prefer access through "//third_party/cargo", which limits external
+    # Prefer access through "//third_party/rust/crates", which limits external
     # visibility to explicit Cargo.toml dependencies.
     "//visibility:public",
 ])
@@ -84,7 +84,7 @@ rust_library(
     # buildifier: leave-alone
     deps = [
         ":erased_serde_build_script",
-        "@raze__serde__1_0_136//:serde",
+        "@raze__serde__1_0_137//:serde",
     ],
 )
 

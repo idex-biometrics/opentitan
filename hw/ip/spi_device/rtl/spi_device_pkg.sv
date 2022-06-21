@@ -16,7 +16,6 @@ package spi_device_pkg;
     // Passthrough includes SCK also. The sck_en is pad out enable not CG
     // enable. The CG is placed in SPI_DEVICE IP.
     logic       sck;
-    logic       sck_gate_en; // TBD: place for CG?
     logic       sck_en;
 
     // CSb should be pull-up pad. In passthrough mode, CSb is directly connected
@@ -38,7 +37,6 @@ package spi_device_pkg;
   parameter passthrough_req_t PASSTHROUGH_REQ_DEFAULT = '{
     passthrough_en: 1'b 0,
     sck:            1'b 0,
-    sck_gate_en:    1'b 0,
     sck_en:         1'b 0,
     csb:            1'b 1,
     csb_en:         1'b 0,
@@ -365,18 +363,29 @@ package spi_device_pkg;
     CmdWriteDisable = 8'h 04,
     CmdWriteEnable  = 8'h 06,
 
+    CmdEn4B = 8'h B7,
+    CmdEx4B = 8'h E9,
+
     CmdReadSfdp = 8'h 5A,
+
+    CmdChipErase = 8'h C7,
 
     CmdEnableReset = 8'h 66,
     CmdResetDevice = 8'h 99
   } spi_cmd_e;
 
   // Sram parameters
-  parameter int unsigned SramDw    = 32;
-  parameter int unsigned SramStrbW = SramDw/8;
+  parameter int unsigned SramDw      = 32;
+  parameter int unsigned SramStrbW   = SramDw/8;
+  parameter int unsigned SramOffsetW = $clog2(SramStrbW);
 
   // Msg region is used for read cmd in Flash and Passthrough region
   parameter int unsigned SramMsgDepth = 512; // 2kB
+  parameter int unsigned SramMsgBytes = SramMsgDepth * SramStrbW;
+
+  // Address Width of a Buffer in bytes
+  parameter int unsigned SramBufferBytes = SramMsgBytes / 2; // Double Buffer
+  parameter int unsigned SramBufferAw    = $clog2(SramBufferBytes);
 
   parameter int unsigned SramMailboxDepth = 256; // 1kB for mailbox
 

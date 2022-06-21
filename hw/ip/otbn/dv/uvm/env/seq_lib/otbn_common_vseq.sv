@@ -24,6 +24,7 @@ class otbn_common_vseq extends otbn_base_vseq;
                          inout bit [BUS_DW-1:0]    data,
                          output bit                completed,
                          output bit                saw_err,
+                         input uint             tl_access_timeout_ns = default_spinwait_timeout_ns,
                          input bit [BUS_DBW-1:0]   mask = '1,
                          input bit                 check_rsp = 1'b1,
                          input bit                 exp_err_rsp = 1'b0,
@@ -35,13 +36,13 @@ class otbn_common_vseq extends otbn_base_vseq;
                          tl_sequencer              tl_sequencer_h = p_sequencer.tl_sequencer_h,
                          input tl_intg_err_e       tl_intg_err_type = TlIntgErrNone,
                          input int                 req_abort_pct = 0);
-    super.tl_access_w_abort(addr, write, data, completed, saw_err, mask, check_rsp, exp_err_rsp,
-                            exp_data, compare_mask, check_exp_data, blocking, instr_type,
-                            tl_sequencer_h, tl_intg_err_type, req_abort_pct);
+    super.tl_access_w_abort(addr, write, data, completed, saw_err, tl_access_timeout_ns, mask,
+                            check_rsp, exp_err_rsp, exp_data, compare_mask, check_exp_data,
+                            blocking, instr_type, tl_sequencer_h, tl_intg_err_type, req_abort_pct);
 
     // If we see a write which causes an integrity error AND we've disabled the scoreboard (which
     // has its own predictor), we update the predicted value of the STATUS register to be LOCKED.
-    if (completed && saw_err && !cfg.en_scb) begin
+    if (completed && saw_err && !cfg.en_scb && tl_intg_err_type != TlIntgErrNone) begin
       `DV_CHECK_FATAL(ral.status.status.predict(otbn_pkg::StatusLocked, .kind(UVM_PREDICT_READ)),
                       "Failed to update STATUS register")
     end
@@ -58,11 +59,11 @@ class otbn_common_vseq extends otbn_base_vseq;
   endtask
 
   // Overriden from cip_base_vseq. Initialise Imem and Dmem and then call the super function.
-  task run_passthru_mem_tl_intg_err_vseq_sub(int num_times = 1, string ral_name);
+  task run_passthru_mem_tl_intg_err_vseq_sub(string ral_name);
     `uvm_info(`gfn, "Overriding run_passthru_mem_tl_intg_err_vseq_sub", UVM_HIGH)
     imem_init();
     dmem_init();
-    super.run_passthru_mem_tl_intg_err_vseq_sub(num_times, ral_name);
+    super.run_passthru_mem_tl_intg_err_vseq_sub(ral_name);
   endtask
 
   virtual function void inject_intg_fault_in_passthru_mem(dv_base_mem mem,
@@ -108,8 +109,15 @@ class otbn_common_vseq extends otbn_base_vseq;
   endfunction
 
   virtual task check_sec_cm_fi_resp(sec_cm_base_if_proxy if_proxy);
+    uvm_reg_field fatal_cause;
     super.check_sec_cm_fi_resp(if_proxy);
-    csr_utils_pkg::csr_rd_check(.ptr(ral.fatal_alert_cause.bad_internal_state), .compare_value(1));
+
+    if (if_proxy.sec_cm_type == SecCmPrimOnehot) begin
+      fatal_cause = ral.fatal_alert_cause.reg_intg_violation;
+    end else begin
+      fatal_cause = ral.fatal_alert_cause.bad_internal_state;
+    end
+    csr_utils_pkg::csr_rd_check(.ptr(fatal_cause), .compare_value(1));
     csr_utils_pkg::csr_rd_check(.ptr(ral.status), .compare_value('hFF));
   endtask : check_sec_cm_fi_resp
 

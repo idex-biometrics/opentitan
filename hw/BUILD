@@ -4,6 +4,22 @@
 
 load("//rules:fusesoc.bzl", "fusesoc_build")
 
+# This configuration exposes fusesoc's "verilator_options" option to the
+# command line. This is intended to allow CI to specifically build a single
+# -threaded Verilator model since the build environment there is more resource
+# -constrained.
+# By default and in all other cases, the Verilator model should be built to
+# run with 4 threads.
+load("@bazel_skylib//rules:common_settings.bzl", "string_list_flag")
+
+string_list_flag(
+    name = "verilator_options",
+    build_setting_default = [
+        "--threads",
+        "4",
+    ],
+)
+
 fusesoc_build(
     name = "verilator_real",
     srcs = [
@@ -13,8 +29,11 @@ fusesoc_build(
         "//:cores",
     ],
     data = ["//hw/ip/otbn:all_files"],
+    flags = ["--verilator_options=--threads 1"],
     systems = ["lowrisc:dv:chip_verilator_sim"],
+    tags = ["verilator"],
     target = "sim",
+    verilator_options = ":verilator_options",
 )
 
 # This is used in CI steps that do not want to run Verilator tests, and thus
@@ -48,6 +67,16 @@ alias(
         ":disable_verilator_build": ":verilator-stub",
         "//conditions:default": ":verilator_real",
     }),
+    tags = ["verilator"],
+    visibility = ["//visibility:public"],
+)
+
+genrule(
+    name = "fusesoc_ignore",
+    outs = ["FUSESOC_IGNORE"],
+    cmd = """
+        touch $@
+    """,
     visibility = ["//visibility:public"],
 )
 
@@ -56,7 +85,10 @@ alias(
 # relationships between verilog components.
 filegroup(
     name = "all_files",
-    srcs = glob(["**"]) + [
+    srcs = glob(
+        ["**"],
+        exclude = ["dv/tools/ralgen/*"],
+    ) + [
         "//hw/ip:all_files",
         "//hw/top_earlgrey:all_files",
     ],

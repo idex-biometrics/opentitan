@@ -167,11 +167,11 @@
     {
       name: error_mp
       desc: '''
-            Perform accesses in order to provoke memory permission error. Test both, Software
-            interface and Hardware interface. Related covergroup is error_cg.
+            Perform accesses in order to provoke memory permission errors. Test the Software
+            interface (Erase, Program, Read). Related covergroup is error_cg.
             '''
       milestone: V2
-      tests: []
+      tests: ["flash_ctrl_error_mp"]
     }
     {
       name: error_rd
@@ -185,20 +185,29 @@
     {
       name: error_prog_win
       desc: '''
-            Perform accesses in order to provoke program resolution error. Test both, Software
-            interface and Hardware interface. Related covergroup is error_cg.
+            Perform accesses in order to provoke the 'program resolution' error.
+            Test via the Software interface. Related covergroup is error_cg.
             '''
       milestone: V2
-      tests: []
+      tests: ["flash_ctrl_error_prog_win"]
     }
     {
       name: error_prog_type
       desc: '''
-            Perform accesses in order to provoke program type error. Test both, Software interface
-            and Hardware interface. Related covergroup is error_cg.
+            Perform accesses in order to provoke the 'program type' error.
+            Test via the Software interface. Related covergroup is error_cg.
             '''
       milestone: V2
-      tests: []
+      tests: ["flash_ctrl_error_prog_type"]
+    }
+    {
+      name: stress_all
+      desc: '''
+            - combine above sequences in one test to run sequentially, except csr sequence
+            - randomly add reset between each sequence
+            '''
+      milestone: V2
+      tests: ["flash_ctrl_stress_all"]
     }
     {
       name: error_flash_phy
@@ -249,6 +258,24 @@
       tests: []
     }
     {
+      name: invalid_op
+      desc: '''
+            Send invalid command in order to check that it does not affect memory content.
+            Check that recovery alert is triggered.
+            '''
+      milestone: V2
+      tests: ["flash_ctrl_invalid_op"]
+    }
+    {
+      name: mid_op_rst
+      desc: '''
+            Flash middle operation reset test. Send reset via power ready signal
+            in the middle of operation program, read, erase and erase suspend.
+            '''
+      milestone: V2
+      tests: ["flash_ctrl_mid_op_rst"]
+    }
+    {
       name: ecc
       desc: '''
             Randomly enable ECC for a randomly selected set of pages. Randomly corrupt a single bit
@@ -292,30 +319,14 @@
       desc: '''
             Covers that all operations READ/PROGRAM/ERASE/UNKNOWN have been tested.
             Covers that ERASE operation is performed on a page and on entire bank.
-            Covers data and info partition selection.
-            Covers types of informational partitions.
-            Covers if request of erase suspension occured.
-            Covers High Endurance feature.
-            Covers scramble feature.
-            Covers ECC feature.
+            Covers data and info partitions selection.
             All valid combinations of the above will also be crossed.
             '''
     }
     {
-      name: flash_words_len_cg
+      name: erase_susp_cg
       desc: '''
-            Covers number of flash words for operations READ/PROGRAM.
-            The minimum tested number of words is 0 and the maximum length is 2^12-1.
-            Cover an acceptable distribution of lengths has been seen including corner cases
-            (length 0 and length 2^12-1).
-            '''
-    }
-    {
-      name: region_range_cg
-      desc: '''
-            Covers all possible numbers of region base pages abd region size pages which are given
-            in pages. Cover an acceptable distribution of lengths has been seen including corner
-            cases (value 0 and maximum value for which it makes sense to test it).
+            Covers if request of erase suspension occured.
             '''
     }
     {

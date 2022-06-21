@@ -47,6 +47,7 @@ impl Frame {
     const DATA_LEN: usize = 1024 - std::mem::size_of::<FrameHeader>();
     const HASH_LEN: usize = 32;
     const MAGIC_HEADER: [u8; 4] = [0xfd, 0xff, 0xff, 0xff];
+    const CRYPTOLIB_TELL: [u8; 4] = [0x53, 0x53, 0x53, 0x53];
 
     /// Computes the hash in the header.
     fn header_hash(&self) -> [u8; Frame::HASH_LEN] {
@@ -82,10 +83,11 @@ impl Frame {
             RescueError::ImageFormatError
         );
 
-        // Find second occurrence of magic value.
+        // Find second occurrence of magic value, not followed by signature of encrypted
+        // cryptolib.
         let min_addr = match payload[256..]
             .chunks(256)
-            .position(|c| &c[0..4] == &Self::MAGIC_HEADER)
+            .position(|c| &c[0..4] == &Self::MAGIC_HEADER && &c[4..8] != &Self::CRYPTOLIB_TELL)
         {
             Some(n) => (n + 1) * 256,
             None => bail!(RescueError::ImageFormatError),
@@ -302,6 +304,7 @@ impl UpdateProtocol for Rescue {
         container: &Bootstrap,
         transport: &TransportWrapper,
         payload: &[u8],
+        progress: &dyn Fn(u32, u32),
     ) -> Result<()> {
         let frames = Frame::from_payload(payload)?;
         let uart = container.uart_params.create(transport)?;
@@ -312,6 +315,7 @@ impl UpdateProtocol for Rescue {
         'next_block: for (idx, frame) in frames.iter().enumerate() {
             for consecutive_errors in 0..Self::MAX_CONSECUTIVE_ERRORS {
                 eprint!("{}.", idx);
+                progress(frame.header.flash_offset, frame.data.len() as u32);
                 uart.write(frame.as_bytes())?;
                 let mut response = [0u8; Frame::HASH_LEN];
                 let mut index = 0;

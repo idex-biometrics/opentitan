@@ -25,7 +25,7 @@
  *  RSTMGR SW_RST_CTRL Test
  *
  *  This test checks RSTMGR.SW_RST_CTRL_N[index] with peripheral devices.
- *  There are 8 RSTMGR.SW_RST_CTRL_N registers and each register
+ *  There are 7 RSTMGR.SW_RST_CTRL_N registers and each register
  *  controls peripheral reset as follows:
  *
  * // index | device     |  test register |  reset value |  prgm value |
@@ -34,10 +34,9 @@
  * // 1     | SPI_HOST0  |  CONFIGOPTS    |  0x0         |  0x3210000
  * // 2     | SPI_HOST1  |  CONFIGOPTS    |  0x0         |  0x6540000
  * // 3     | USB        |  EP_OUT_ENABLE |  0x0         |  0xc3
- * // 4     | USBIF      |  RXENABLE_OUT  |  0x0         |  0x695
- * // 5     | I2C0       |  TIMING0       |  0x0         |  0x8b00cfe
- * // 6     | I2C1       |  TIMING1       |  0x0         |  0x114010d8
- * // 7     | I2C2       |  TIMING2       |  0x0         |  0x19ec1595
+ * // 4     | I2C0       |  TIMING0       |  0x0         |  0x8b00cfe
+ * // 5     | I2C1       |  TIMING1       |  0x0         |  0x114010d8
+ * // 6     | I2C2       |  TIMING2       |  0x0         |  0x19ec1595
  *
  * 'test register' is a rw type register under each peripheral device.
  * During the test, these registers are programmed with arbitrary values. ('prgm
@@ -57,16 +56,26 @@ MAKE_INIT_FUNC(usbdev);
 MAKE_INIT_FUNC(i2c);
 
 static void spi_device_config(void *dif) {
+  uintptr_t handle_address =
+      ((uintptr_t)dif - offsetof(dif_spi_device_handle_t, dev));
+  dif_spi_device_handle_t *handle = (dif_spi_device_handle_t *)handle_address;
   dif_spi_device_config_t cfg = {
       .clock_polarity = kDifSpiDeviceEdgePositive,
       .data_phase = kDifSpiDeviceEdgeNegative,
       .tx_order = kDifSpiDeviceBitOrderLsbToMsb,
       .rx_order = kDifSpiDeviceBitOrderLsbToMsb,
-      .rx_fifo_timeout = 63,
-      .rx_fifo_len = 0x800,
-      .tx_fifo_len = 0x800,
+      .device_mode = kDifSpiDeviceModeGeneric,
+      .mode_cfg =
+          {
+              .generic =
+                  {
+                      .rx_fifo_commit_wait = 63,
+                      .rx_fifo_len = 0x800,
+                      .tx_fifo_len = 0x800,
+                  },
+          },
   };
-  CHECK_DIF_OK(dif_spi_device_configure(dif, &cfg));
+  CHECK_DIF_OK(dif_spi_device_configure(handle, cfg));
 }
 
 static void spi_host0_config(void *dif) {
@@ -127,7 +136,7 @@ static void i2c2_config(void *dif) {
   CHECK_DIF_OK(dif_i2c_configure(dif, cfg));
 }
 
-static dif_spi_device_t spi_dev;
+static dif_spi_device_handle_t spi_dev;
 static dif_spi_host_t spi_host0;
 static dif_spi_host_t spi_host1;
 static dif_usbdev_t usbdev;
@@ -162,11 +171,11 @@ typedef struct test {
    * Configuration and initialization actions for the device. This
    * will be passed the value of `dif` above.
    *
-   * If `NULL`, the test register will be set to the value of `program_val`.
+   * If `NULL`, the test register will be set to 'reset_vals[]'.
    */
   void (*config)(void *dif);
   /**
-   * The expected test register value after configuration.
+   * Arbitrary test register value before reset.
    */
   uint32_t program_val;
   /**
@@ -180,7 +189,7 @@ static const test_t kPeripherals[] = {
         .name = "SPI_DEVICE",
         .base = TOP_EARLGREY_SPI_DEVICE_BASE_ADDR,
         .offset = SPI_DEVICE_CFG_REG_OFFSET,
-        .dif = &spi_dev,
+        .dif = &spi_dev.dev,
         .init = spi_device_init,
         .config = spi_device_config,
         .program_val = 0x3f0c,
@@ -214,13 +223,6 @@ static const test_t kPeripherals[] = {
         .init = usbdev_init,
         .program_val = 0xc3,
         .reset_index = kTopEarlgreyResetManagerSwResetsUsb,
-    },
-    {
-        .name = "USBIF",
-        .base = TOP_EARLGREY_USBDEV_BASE_ADDR,
-        .offset = USBDEV_RXENABLE_OUT_REG_OFFSET,
-        .program_val = 0x695,
-        .reset_index = kTopEarlgreyResetManagerSwResetsUsbif,
     },
     {
         .name = "I2C0",
@@ -283,10 +285,10 @@ bool test_main(void) {
                           kPeripherals[i].offset, kPeripherals[i].program_val);
     }
 
+    // add read back to make sure
+    // all register access complete
     uint32_t got = read_test_reg(&kPeripherals[i]);
-    CHECK(got == kPeripherals[i].program_val,
-          "after configure: reset_val for %s mismatch: want 0x%x, got 0x%x",
-          kPeripherals[i].name, kPeripherals[i].program_val, got);
+    LOG_INFO("programmed value : 0x%x", got);
   }
 
   for (size_t i = 0; i < ARRAYSIZE(kPeripherals); ++i) {
@@ -294,9 +296,9 @@ bool test_main(void) {
                                            kDifRstmgrSoftwareReset));
 
     uint32_t got = read_test_reg(&kPeripherals[i]);
-    CHECK(got == kPeripherals[i].program_val,
+    CHECK(got == reset_vals[i],
           "after configure: reset_val for %s mismatch: want 0x%x, got 0x%x",
-          kPeripherals[i].name, kPeripherals[i].program_val, got);
+          kPeripherals[i].name, reset_vals[i], got);
   }
 
   return true;

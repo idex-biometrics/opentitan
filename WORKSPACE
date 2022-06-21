@@ -43,6 +43,20 @@ rust_repos()
 load("//third_party/rust:deps.bzl", "rust_deps")
 rust_deps()
 
+# Cargo Raze dependencies
+load("//third_party/cargo_raze:repos.bzl", "raze_repos")
+raze_repos()
+load("//third_party/cargo_raze:deps.bzl", "raze_deps")
+raze_deps()
+# The raze instructions would have us call `cargo_raze_transitive_deps`, but that
+# wants to re-instantiate rules_rust and mess up our rust configuration.
+# Instead, we perform the single other action that transitive_deps would perform:
+# load and instantiate `rules_foreign_cc_dependencies`.
+#load("@cargo_raze//:transitive_deps.bzl", "cargo_raze_transitive_deps")
+#cargo_raze_transitive_deps()
+load("@rules_foreign_cc//foreign_cc:repositories.bzl", "rules_foreign_cc_dependencies")
+rules_foreign_cc_dependencies()
+
 # Protobuf Toolchain
 load("//third_party/protobuf:repos.bzl", "protobuf_repos")
 protobuf_repos()
@@ -66,6 +80,17 @@ riscv_compliance_repos()
 # Bitstreams from https://storage.googleapis.com/opentitan-bitstreams/
 load("//rules:bitstreams.bzl", "bitstreams_repo")
 bitstreams_repo(name = "bitstreams")
+
+# Setup for linking in external test hooks.
+load("//rules:hooks_setup.bzl", "hooks_setup")
+hooks_setup(
+    name = "hooks_setup",
+    dummy = "sw/device/tests/closed_source",
+)
+
+# Declare the external test_hooks repository.
+load("@hooks_setup//:repos.bzl", "hooks_repo")
+hooks_repo(name = "manufacturer_test_hooks")
 
 # The nonhermetic_repo imports environment variables needed to run vivado.
 load("//rules:nonhermetic.bzl", "nonhermetic_repo")

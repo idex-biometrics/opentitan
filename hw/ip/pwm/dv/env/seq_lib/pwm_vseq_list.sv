@@ -6,3 +6,5 @@
 `include "pwm_smoke_vseq.sv"
 `include "pwm_common_vseq.sv"
 `include "pwm_rand_output_vseq.sv"
+`include "pwm_perf_vseq.sv"
+`include "pwm_stress_all_vseq.sv"

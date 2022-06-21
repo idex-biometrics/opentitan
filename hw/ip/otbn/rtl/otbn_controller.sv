@@ -24,12 +24,14 @@ module otbn_controller
   input  logic start_i,   // start the processing at address zero
   output logic locking_o, // Controller is in or is entering the locked state
 
-  input prim_mubi_pkg::mubi4_t escalate_en_i,
+  input prim_mubi_pkg::mubi4_t fatal_escalate_en_i,
+  input prim_mubi_pkg::mubi4_t recov_escalate_en_i,
   output controller_err_bits_t err_bits_o,
   output logic                 recoverable_err_o,
 
   // Next instruction selection (to instruction fetch)
   output logic                     insn_fetch_req_valid_o,
+  output logic                     insn_fetch_req_valid_raw_o,
   output logic [ImemAddrWidth-1:0] insn_fetch_req_addr_o,
   output logic                     insn_fetch_resp_clear_o,
 
@@ -59,7 +61,8 @@ module otbn_controller
   input  logic [BaseIntgWidth-1:0] rf_base_rd_data_b_intg_i,
   output logic                     rf_base_rd_commit_o,
 
-  input logic rf_base_call_stack_err_i,
+  input logic rf_base_call_stack_sw_err_i,
+  input logic rf_base_call_stack_hw_err_i,
 
   // Bignum register file (WDRs)
   output logic [4:0]         rf_bignum_wr_addr_o,
@@ -77,7 +80,7 @@ module otbn_controller
   output logic               rf_bignum_rd_en_b_o,
   input  logic [ExtWLEN-1:0] rf_bignum_rd_data_b_intg_i,
 
-  input logic rf_bignum_rd_data_err_i,
+  input logic rf_bignum_rf_err_i,
 
   output logic [NWdr-1:0] rf_bignum_rd_a_indirect_onehot_o,
   output logic [NWdr-1:0] rf_bignum_rd_b_indirect_onehot_o,
@@ -94,6 +97,7 @@ module otbn_controller
 
   // Bignum ALU
   output alu_bignum_operation_t alu_bignum_operation_o,
+  output logic                  alu_bignum_operation_valid_o,
   output logic                  alu_bignum_operation_commit_o,
   input  logic [WLEN-1:0]       alu_bignum_operation_result_i,
   input  logic                  alu_bignum_selection_flag_i,
@@ -121,22 +125,20 @@ module otbn_controller
   output ispr_e                       ispr_addr_o,
   output logic [31:0]                 ispr_base_wdata_o,
   output logic [BaseWordsPerWLEN-1:0] ispr_base_wr_en_o,
-  output logic [WLEN-1:0]             ispr_bignum_wdata_o,
+  output logic [ExtWLEN-1:0]          ispr_bignum_wdata_intg_o,
   output logic                        ispr_bignum_wr_en_o,
   output logic                        ispr_wr_commit_o,
-  input  logic [WLEN-1:0]             ispr_rdata_i,
+  input  logic [ExtWLEN-1:0]          ispr_rdata_intg_i,
   output logic                        ispr_rd_en_o,
 
   // RND interface
   output logic rnd_req_o,
   output logic rnd_prefetch_req_o,
   input  logic rnd_valid_i,
-  input  logic rnd_rep_err_i,
-  input  logic rnd_fips_err_i,
 
   // Secure Wipe
-  input  logic secure_wipe_running_i,
   output logic start_secure_wipe_o,
+  input  logic secure_wipe_done_i,
   input  logic sec_wipe_zero_i,
 
   input  logic        state_reset_i,
@@ -154,7 +156,11 @@ module otbn_controller
   output logic [31:0]              prefetch_loop_iterations_o,
   output logic [ImemAddrWidth:0]   prefetch_loop_end_addr_o,
   output logic [ImemAddrWidth-1:0] prefetch_loop_jump_addr_o,
+  output logic                     prefetch_ignore_errs_o,
 
+  // Predecoded control
+  input  ctrl_flow_predec_t        ctrl_flow_predec_i,
+  input  logic [ImemAddrWidth-1:0] ctrl_flow_target_predec_i,
   output logic                     predec_error_o
 );
   import prim_mubi_pkg::*;
@@ -166,13 +172,15 @@ module otbn_controller
 
   // The specific error signals that go into err_bits_d
   logic fatal_software_err, bad_internal_state_err, reg_intg_violation_err, key_invalid_err;
-  logic illegal_insn_err, bad_data_addr_err, call_stack_err, bad_insn_addr_err;
+  logic illegal_insn_err, bad_data_addr_err, call_stack_sw_err, bad_insn_addr_err;
 
   logic err;
+  logic internal_err;
   logic recoverable_err;
   logic software_err;
   logic non_insn_addr_software_err;
   logic fatal_err;
+  logic internal_fatal_err;
   logic done_complete;
   logic executing;
   logic state_error;
@@ -220,6 +228,9 @@ module otbn_controller
   logic                     lsu_addr_saved_sel;
   logic                     expected_lsu_addr_en;
 
+  logic                     expected_call_stack_push, expected_call_stack_pop;
+  logic                     lsu_predec_error, branch_target_predec_error, ctrl_predec_error;
+
   logic rnd_req_raw;
 
   // Register read data with integrity stripped off
@@ -229,6 +240,13 @@ module otbn_controller
   logic [WLEN-1:0] rf_bignum_rd_data_b_no_intg;
 
   logic [ExtWLEN-1:0] selection_result;
+
+  logic [1:0] rf_bignum_wr_en_unbuf;
+  logic [4:0] rf_bignum_wr_addr_unbuf;
+  logic [4:0] rf_bignum_rd_addr_a_unbuf;
+  logic       rf_bignum_rd_en_a_unbuf;
+  logic [4:0] rf_bignum_rd_addr_b_unbuf;
+  logic       rf_bignum_rd_en_b_unbuf;
 
   logic rf_bignum_rd_a_indirect_en;
   logic rf_bignum_rd_b_indirect_en;
@@ -261,8 +279,9 @@ module otbn_controller
 
   logic [WLEN-1:0] mac_bignum_rf_wr_data;
 
+  logic loop_hw_err, loop_predec_err;
   logic csr_illegal_addr, wsr_illegal_addr, ispr_illegal_addr;
-  logic imem_addr_err, loop_err, ispr_err;
+  logic imem_addr_err, loop_sw_err, ispr_err;
   logic dmem_addr_err_check, dmem_addr_err;
   logic dmem_addr_unaligned_base, dmem_addr_unaligned_bignum, dmem_addr_overflow;
   logic illegal_insn_static;
@@ -275,13 +294,26 @@ module otbn_controller
   // and we've underflowed the call stack. When this happens, we want to ignore any read data
   // integrity errors since the read from the bignum register file didn't happen architecturally
   // anyway.
-  logic ignore_bignum_rd_errs;
-  logic rf_bignum_rd_data_err;
+  logic ignore_bignum_rf_errs;
+  logic rf_bignum_rf_err;
+
+  logic ispr_rdata_intg_err;
 
   logic [31:0] insn_cnt_d, insn_cnt_q;
   logic        insn_cnt_clear;
 
   logic [4:0] insn_bignum_rd_addr_a_q, insn_bignum_rd_addr_b_q, insn_bignum_wr_addr_q;
+
+  logic secure_wipe_running_q, secure_wipe_running_d;
+  assign secure_wipe_running_d = (start_secure_wipe_o |
+                                  (secure_wipe_running_q & ~secure_wipe_done_i));
+  always_ff @(posedge clk_i or negedge rst_ni) begin
+    if (!rst_ni) begin
+      secure_wipe_running_q <= 1'b0;
+    end else begin
+      secure_wipe_running_q <= secure_wipe_running_d;
+    end
+  end
 
   // Stall a cycle on loads to allow load data writeback to happen the following cycle. Stall not
   // required on stores as there is no response to deal with.
@@ -308,8 +340,8 @@ module otbn_controller
   assign executing = (state_q == OtbnStateRun) ||
                      (state_q == OtbnStateStall);
 
-  assign locking_o = (state_d == OtbnStateLocked) & ~secure_wipe_running_i;
-  assign start_secure_wipe_o = executing & (done_complete | err) & ~secure_wipe_running_i;
+  assign locking_o = (state_d == OtbnStateLocked) & ~secure_wipe_running_d;
+  assign start_secure_wipe_o = executing & (done_complete | err) & ~secure_wipe_running_q;
 
   assign jump_or_branch = (insn_valid_i &
                            (insn_dec_shared_i.branch_insn | insn_dec_shared_i.jump_insn));
@@ -439,7 +471,11 @@ module otbn_controller
   // Anything that moves us or keeps us in the stall state should cause `stall` to be asserted
   `ASSERT(StallIfNextStateStall, insn_valid_i & (state_d == OtbnStateStall) |-> stall)
 
-  assign insn_fetch_req_valid_o = err ? 1'b0 : insn_fetch_req_valid_raw;
+  // The raw signal is needed by the instruction fetch stage for generating instruction address
+  // errors (where instruction fetch and prefetch disagree on address). `err` will factor this in so
+  // using the qualified signal results in a combinational loop.
+  assign insn_fetch_req_valid_raw_o = insn_fetch_req_valid_raw;
+  assign insn_fetch_req_valid_o     = err ? 1'b0 : insn_fetch_req_valid_raw;
 
   // Determine if there are any errors related to the Imem fetch address.
   always_comb begin
@@ -462,21 +498,21 @@ module otbn_controller
   assign illegal_insn_static = insn_illegal_i | ispr_err;
 
   assign fatal_software_err       = software_err & software_errs_fatal_i;
-  assign bad_internal_state_err   = state_error;
-  assign reg_intg_violation_err   = rf_bignum_rd_data_err;
+  assign bad_internal_state_err   = state_error | loop_hw_err | rf_base_call_stack_hw_err_i;
+  assign reg_intg_violation_err   = rf_bignum_rf_err | ispr_rdata_intg_err;
   assign key_invalid_err          = ispr_rd_bignum_insn & insn_valid_i & key_invalid;
   assign illegal_insn_err         = illegal_insn_static | rf_indirect_err;
   assign bad_data_addr_err        = dmem_addr_err;
-  assign call_stack_err           = rf_base_call_stack_err_i;
+  assign call_stack_sw_err        = rf_base_call_stack_sw_err_i;
 
   // All software errors that aren't bad_insn_addr. Factored into bad_insn_addr so it is only raised
   // if other software errors haven't ocurred. As bad_insn_addr relates to the next instruction
   // begin fetched it cannot occur if the current instruction has seen an error and failed to
   // execute.
   assign non_insn_addr_software_err = |{key_invalid_err,
-                                        loop_err,
+                                        loop_sw_err,
                                         illegal_insn_err,
-                                        call_stack_err,
+                                        call_stack_sw_err,
                                         bad_data_addr_err};
 
   assign bad_insn_addr_err = imem_addr_err & ~non_insn_addr_software_err;
@@ -485,12 +521,10 @@ module otbn_controller
     fatal_software:     fatal_software_err,
     bad_internal_state: bad_internal_state_err,
     reg_intg_violation: reg_intg_violation_err,
-    rnd_fips_chk_fail:  rnd_fips_err_i,
-    rnd_rep_chk_fail:   rnd_rep_err_i,
     key_invalid:        key_invalid_err,
-    loop:               loop_err,
+    loop:               loop_sw_err,
     illegal_insn:       illegal_insn_err,
-    call_stack:         call_stack_err,
+    call_stack:         call_stack_sw_err,
     bad_data_addr:      bad_data_addr_err,
     bad_insn_addr:      bad_insn_addr_err
   };
@@ -510,23 +544,29 @@ module otbn_controller
 
   assign software_err = non_insn_addr_software_err | bad_insn_addr_err;
 
-  assign recoverable_err = rnd_rep_err_i | rnd_fips_err_i;
+  assign recoverable_err = mubi4_test_true_loose(recov_escalate_en_i);
 
-  assign fatal_err = |{fatal_software_err,
-                       bad_internal_state_err,
-                       reg_intg_violation_err,
-                       mubi4_test_true_loose(escalate_en_i)};
+  assign internal_fatal_err = |{fatal_software_err,
+                                bad_internal_state_err,
+                                reg_intg_violation_err};
+
+  assign fatal_err = internal_fatal_err | mubi4_test_true_loose(fatal_escalate_en_i);
 
   assign recoverable_err_o = recoverable_err | (software_err & ~software_errs_fatal_i);
   assign mems_sec_wipe_o   = (state_d == OtbnStateLocked) & (state_q != OtbnStateLocked);
 
-  assign err = software_err | recoverable_err | fatal_err;
+  assign internal_err = software_err | internal_fatal_err;
+  assign err          = software_err | recoverable_err | fatal_err;
+
+  assign prefetch_ignore_errs_o = internal_err;
 
   // Instructions must not execute if there is an error
   assign insn_executing = insn_valid_i & ~err;
 
   `ASSERT(ErrBitSetOnErr,
-      err & mubi4_test_false_strict(escalate_en_i) |=> err_bits_o)
+      err & (mubi4_test_false_strict(fatal_escalate_en_i) &
+             mubi4_test_false_strict(recov_escalate_en_i)) |=>
+          err_bits_o)
   `ASSERT(ErrSetOnFatalErr, fatal_err |-> err)
   `ASSERT(SoftwareErrIfNonInsnAddrSoftwareErr, non_insn_addr_software_err |-> software_err)
 
@@ -576,14 +616,18 @@ module otbn_controller
     .insn_addr_i,
     .next_insn_addr_i(next_insn_addr),
 
-    .loop_start_req_i   (loop_start_req),
-    .loop_start_commit_i(loop_start_commit),
-    .loop_bodysize_i    (loop_bodysize),
-    .loop_iterations_i  (loop_iterations),
+    .loop_start_req_i       (loop_start_req),
+    .loop_start_commit_i    (loop_start_commit),
+    .loop_bodysize_i        (loop_bodysize),
+    .loop_iterations_i      (loop_iterations),
+    .loop_end_addr_predec_i (ctrl_flow_target_predec_i),
 
     .loop_jump_o     (loop_jump),
     .loop_jump_addr_o(loop_jump_addr),
-    .loop_err_o      (loop_err),
+
+    .sw_err_o     (loop_sw_err),
+    .hw_err_o     (loop_hw_err),
+    .predec_err_o (loop_predec_err),
 
     .jump_or_branch_i(jump_or_branch),
     .otbn_stall_i    (stall),
@@ -757,28 +801,36 @@ module otbn_controller
   assign unused_rf_base_rd_a_intg_bits = |rf_base_rd_data_a_intg_i[38:32];
   assign unused_rf_base_rd_b_intg_bits = |rf_base_rd_data_b_intg_i[38:32];
 
-  // Register file write MUX
+  // Base register file write MUX. Depending on the data source, integrity bits do or don't have to
+  // be appended:
+  // - Data sources that require appending integrity bits go into `rf_base_wr_data_no_intg_o` and
+  //   `rf_base_wr_data_intg_sel_o` is low.
+  // - Data sources that already come with integrity bits go into `rf_base_wr_data_intg_o` and
+  //   `rf_base_wr_data_intg_sel_o` is high.
   always_comb begin
-    // Write data mux for anything that needs integrity computing during register write
-    unique case (insn_dec_base_i.rf_wdata_sel)
-      RfWdSelEx:     rf_base_wr_data_no_intg_o = alu_base_operation_result_i;
-      RfWdSelNextPc: rf_base_wr_data_no_intg_o = {{(32-(ImemAddrWidth+1)){1'b0}},
-                                                  next_insn_addr_wide};
-      RfWdSelIspr:   rf_base_wr_data_no_intg_o = csr_rdata;
-      RfWdSelIncr:   rf_base_wr_data_no_intg_o = increment_out;
-      default:       rf_base_wr_data_no_intg_o = alu_base_operation_result_i;
-    endcase
+    // Default values
+    rf_base_wr_data_no_intg_o  = alu_base_operation_result_i;
+    rf_base_wr_data_intg_o     = '0;
+    rf_base_wr_data_intg_sel_o = 1'b0;
 
-    // Write data mux for anything that provides its own integrity
     unique case (insn_dec_base_i.rf_wdata_sel)
+      RfWdSelEx: begin
+        rf_base_wr_data_no_intg_o  = alu_base_operation_result_i;
+      end
+      RfWdSelNextPc: begin
+        rf_base_wr_data_no_intg_o  = {{(32-(ImemAddrWidth+1)){1'b0}}, next_insn_addr_wide};
+      end
+      RfWdSelIspr: begin
+        rf_base_wr_data_no_intg_o  = csr_rdata;
+      end
+      RfWdSelIncr: begin
+        rf_base_wr_data_no_intg_o  = increment_out;
+      end
       RfWdSelLsu: begin
         rf_base_wr_data_intg_sel_o = 1'b1;
         rf_base_wr_data_intg_o     = lsu_base_rdata_i;
       end
-      default: begin
-        rf_base_wr_data_intg_sel_o = 1'b0;
-        rf_base_wr_data_intg_o     = '0;
-      end
+      default: ;
     endcase
   end
 
@@ -787,13 +839,47 @@ module otbn_controller
     assign rf_bignum_rd_data_b_no_intg[i*32+:32] = rf_bignum_rd_data_b_intg_i[i*39+:32];
   end
 
-  assign rf_bignum_rd_addr_a_o = insn_dec_bignum_i.rf_a_indirect ? insn_bignum_rd_addr_a_q :
-                                                                   insn_dec_bignum_i.a;
-  assign rf_bignum_rd_en_a_o = insn_dec_bignum_i.rf_ren_a & insn_valid_i & ~stall;
+  // Bignum RF control signals from the controller aren't actually used, instead the predecoded
+  // one-hot versions are. The predecoded versions get checked against the signals produced here.
+  // Buffer them to ensure they don't get optimised away (with a functionaly correct OTBN they will
+  // always be identical).
+  assign rf_bignum_rd_addr_a_unbuf = insn_dec_bignum_i.rf_a_indirect ? insn_bignum_rd_addr_a_q :
+                                                                       insn_dec_bignum_i.a;
 
-  assign rf_bignum_rd_addr_b_o = insn_dec_bignum_i.rf_b_indirect ? insn_bignum_rd_addr_b_q :
-                                                                   insn_dec_bignum_i.b;
-  assign rf_bignum_rd_en_b_o = insn_dec_bignum_i.rf_ren_b & insn_valid_i & ~stall;
+  prim_buf #(
+    .Width(WdrAw)
+  ) u_rf_bignum_rd_addr_a_buf (
+    .in_i (rf_bignum_rd_addr_a_unbuf),
+    .out_o(rf_bignum_rd_addr_a_o)
+  );
+
+  assign rf_bignum_rd_en_a_unbuf = insn_dec_bignum_i.rf_ren_a & insn_valid_i & ~stall;
+
+  prim_buf #(
+    .Width(1)
+  ) u_rf_bignum_rd_en_a_buf (
+    .in_i (rf_bignum_rd_en_a_unbuf),
+    .out_o(rf_bignum_rd_en_a_o)
+  );
+
+  assign rf_bignum_rd_addr_b_unbuf = insn_dec_bignum_i.rf_b_indirect ? insn_bignum_rd_addr_b_q :
+                                                                       insn_dec_bignum_i.b;
+
+  prim_buf #(
+    .Width(WdrAw)
+  ) u_rf_bignum_rd_addr_b_buf (
+    .in_i (rf_bignum_rd_addr_b_unbuf),
+    .out_o(rf_bignum_rd_addr_b_o)
+  );
+
+  assign rf_bignum_rd_en_b_unbuf = insn_dec_bignum_i.rf_ren_b & insn_valid_i & ~stall;
+
+  prim_buf #(
+    .Width(1)
+  ) u_rf_bignum_rd_en_b_buf (
+    .in_i (rf_bignum_rd_en_b_unbuf),
+    .out_o(rf_bignum_rd_en_b_o)
+  );
 
   assign alu_bignum_operation_o.operand_a = rf_bignum_rd_data_a_no_intg;
 
@@ -814,6 +900,7 @@ module otbn_controller
   assign alu_bignum_operation_o.alu_flag_en = insn_dec_bignum_i.alu_flag_en & insn_valid_i;
   assign alu_bignum_operation_o.mac_flag_en = insn_dec_bignum_i.mac_flag_en & insn_valid_i;
 
+  assign alu_bignum_operation_valid_o  = insn_valid_i;
   assign alu_bignum_operation_commit_o = insn_executing;
 
   assign mac_bignum_operation_o.operand_a         = rf_bignum_rd_data_a_no_intg;
@@ -842,7 +929,7 @@ module otbn_controller
 
   always_comb begin
     // By default write nothing
-    rf_bignum_wr_en_o     = 2'b00;
+    rf_bignum_wr_en_unbuf = 2'b00;
 
     // Only write if valid instruction wants a bignum rf write and it isn't stalled. If instruction
     // doesn't execute (e.g. due to an error) the write won't commit.
@@ -850,13 +937,25 @@ module otbn_controller
       if (insn_dec_bignum_i.mac_en && insn_dec_bignum_i.mac_shift_out) begin
         // Special handling for BN.MULQACC.SO, only enable upper or lower half depending on
         // mac_wr_hw_sel_upper.
-        rf_bignum_wr_en_o = insn_dec_bignum_i.mac_wr_hw_sel_upper ? 2'b10 : 2'b01;
+        rf_bignum_wr_en_unbuf = insn_dec_bignum_i.mac_wr_hw_sel_upper ? 2'b10 : 2'b01;
       end else begin
         // For everything else write both halves immediately.
-        rf_bignum_wr_en_o = 2'b11;
+        rf_bignum_wr_en_unbuf = 2'b11;
       end
     end
   end
+
+  // Bignum RF control signals from the controller aren't actually used, instead the predecoded
+  // one-hot versions are. The predecoded versions get checked against the signals produced here.
+  // Buffer them to ensure they don't get optimised away (with a functionaly correct OTBN they will
+  // always be identical).
+  prim_buf #(
+    .Width(2)
+  ) u_bignum_wr_en_buf (
+    .in_i (rf_bignum_wr_en_unbuf),
+    .out_o(rf_bignum_wr_en_o)
+  );
+
 
   assign rf_bignum_wr_commit_o = |rf_bignum_wr_en_o & insn_executing & !stall;
 
@@ -905,8 +1004,19 @@ module otbn_controller
     end
   end
 
-  assign rf_bignum_wr_addr_o = insn_dec_bignum_i.rf_d_indirect ? insn_bignum_wr_addr_q :
-                                                                 insn_dec_bignum_i.d;
+  // Bignum RF control signals from the controller aren't actually used, instead the predecoded
+  // one-hot versions are. The predecoded versions get checked against the signals produced here.
+  // Buffer them to ensure they don't get optimised away (with a functionaly correct OTBN they will
+  // always be identical).
+  assign rf_bignum_wr_addr_unbuf = insn_dec_bignum_i.rf_d_indirect ? insn_bignum_wr_addr_q :
+                                                                     insn_dec_bignum_i.d;
+
+  prim_buf #(
+    .Width(WdrAw)
+  ) u_rf_bignum_wr_addr_buf (
+    .in_i (rf_bignum_wr_addr_unbuf),
+    .out_o(rf_bignum_wr_addr_o)
+  );
 
   // For the shift-out variant of BN.MULQACC the bottom half of the MAC result is written to one
   // half of a desintation register specified by the instruction (mac_wr_hw_sel_upper). The bottom
@@ -921,42 +1031,46 @@ module otbn_controller
 
   assign mac_bignum_rf_wr_data[WLEN/2-1:0] = mac_bignum_operation_result_i[WLEN/2-1:0];
 
+  // Bignum register file write MUX. Depending on the data source, integrity bits do or don't have
+  // to be appended; see comments on the "Base register file write MUX" for details.
   always_comb begin
-    // Write data mux for anything that needs integrity computing during register write
-    // TODO: ISPR data will go via direct mux below once integrity has been implemented for
-    // them.
-    unique case (insn_dec_bignum_i.rf_wdata_sel)
-      RfWdSelEx:   rf_bignum_wr_data_no_intg_o = alu_bignum_operation_result_i;
-      RfWdSelIspr: rf_bignum_wr_data_no_intg_o = ispr_rdata_i;
-      RfWdSelMac:  rf_bignum_wr_data_no_intg_o = mac_bignum_rf_wr_data;
-      default:     rf_bignum_wr_data_no_intg_o = alu_bignum_operation_result_i;
-    endcase
+    // Default values
+    rf_bignum_wr_data_intg_sel_o = 1'b0;
+    rf_bignum_wr_data_intg_o     = '0;
+    rf_bignum_wr_data_no_intg_o  = alu_bignum_operation_result_i;
 
-    // Write data mux for anything that provides its own integrity
     unique case (insn_dec_bignum_i.rf_wdata_sel)
+      RfWdSelEx: begin
+        rf_bignum_wr_data_no_intg_o  = alu_bignum_operation_result_i;
+      end
+      RfWdSelMac: begin
+        rf_bignum_wr_data_no_intg_o  = mac_bignum_rf_wr_data;
+      end
+      RfWdSelIspr: begin
+        rf_bignum_wr_data_intg_sel_o = 1'b1;
+        rf_bignum_wr_data_intg_o     = ispr_rdata_intg_i;
+      end
       RfWdSelMovSel: begin
         rf_bignum_wr_data_intg_sel_o = 1'b1;
         rf_bignum_wr_data_intg_o     = selection_result;
       end
       RfWdSelLsu: begin
         rf_bignum_wr_data_intg_sel_o = 1'b1;
+        //SEC_CM: BUS.INTEGRITY
         rf_bignum_wr_data_intg_o     = lsu_bignum_rdata_i;
       end
-      default: begin
-        rf_bignum_wr_data_intg_sel_o = 1'b0;
-        rf_bignum_wr_data_intg_o     = '0;
-      end
+      default: ;
     endcase
   end
 
   assign rf_a_indirect_err = insn_dec_bignum_i.rf_a_indirect    &
                              (|rf_base_rd_data_a_no_intg[31:5]) &
-                             ~rf_base_call_stack_err_i          &
+                             ~rf_base_call_stack_sw_err_i       &
                              rf_base_rd_en_a_o;
 
   assign rf_b_indirect_err = insn_dec_bignum_i.rf_b_indirect    &
                              (|rf_base_rd_data_b_no_intg[31:5]) &
-                             ~rf_base_call_stack_err_i          &
+                             ~rf_base_call_stack_sw_err_i       &
                              rf_base_rd_en_b_o;
 
   assign rf_d_indirect_err = insn_dec_bignum_i.rf_d_indirect    &
@@ -966,11 +1080,11 @@ module otbn_controller
   assign rf_indirect_err =
       insn_valid_i & (rf_a_indirect_err | rf_b_indirect_err | rf_d_indirect_err);
 
-  assign ignore_bignum_rd_errs = (insn_dec_bignum_i.rf_a_indirect |
+  assign ignore_bignum_rf_errs = (insn_dec_bignum_i.rf_a_indirect |
                                   insn_dec_bignum_i.rf_b_indirect) &
-                                 rf_base_call_stack_err_i;
+                                 rf_base_call_stack_sw_err_i;
 
-  assign rf_bignum_rd_data_err = rf_bignum_rd_data_err_i & ~ignore_bignum_rd_errs;
+  assign rf_bignum_rf_err = rf_bignum_rf_err_i & ~ignore_bignum_rf_errs;
 
   // CSR/WSR/ISPR handling
   // ISPRs (Internal Special Purpose Registers) are the internal registers. CSRs and WSRs are the
@@ -1013,10 +1127,75 @@ module otbn_controller
     assign ispr_word_sel_base[i_word] = ispr_word_addr_base == i_word;
   end
 
+  // Decode wide ISPR read data.
+  logic [WLEN-1:0]                ispr_rdata;
+  logic [2*BaseWordsPerWLEN-1:0]  ispr_rdata_intg_err_wide;
+  logic [BaseWordsPerWLEN-1:0]    ispr_rdata_intg_err_narrow;
+  for (genvar i_word = 0; i_word < BaseWordsPerWLEN; i_word++) begin : g_ispr_rdata_dec
+    prim_secded_inv_39_32_dec i_secded_dec (
+      .data_i     (ispr_rdata_intg_i[i_word*39+:39]),
+      .data_o     (/* unused because we abort on any integrity error */),
+      .syndrome_o (/* unused */),
+      .err_o      (ispr_rdata_intg_err_wide[i_word*2+:2])
+    );
+    assign ispr_rdata[i_word*32+:32] = ispr_rdata_intg_i[i_word*39+:32];
+    assign ispr_rdata_intg_err_narrow[i_word] = |(ispr_rdata_intg_err_wide[i_word*2+:2]);
+  end
+
+  // Propagate integrity error only if wide ISPR is used.
+
+  // Handle ISPR integrity error detection. We've got a bitmask of ISPR words that failed their
+  // integrity check (ispr_rdata_intg_err_narrow), but a nonzero entry may not be a problem if we
+  // don't actually use the data.
+  //
+  // The situations when the data is actually used are:
+  //
+  //   (1) This is a bignum instruction that writes back to the bignum register file by reading an
+  //       ISPR. In this case, we actually pass the data through with integrity bits, but it
+  //       shouldn't hurt to add fault detection at this point.
+  //
+  //   (2) This instruction consumes the data by selecting a word from an ISPR and then writing it
+  //       back. This happens for things like CSRRS instructions, where the data flows to the base
+  //       register file through rf_base_wr_data_no_intg_o and back to the ISPR through
+  //       ispr_base_wdata_o. The word used is given by the onehot ispr_word_sel_base mask.
+  //
+  // In both cases, there's a special case for the RND_PREFETCH register, which doesn't actually
+  // have any backing data. It reads as zero with invalid integrity bits which we want to ignore.
+
+  // Are we reading all the ISPR data? (case (1) above)
+  logic all_ispr_words_used;
+  assign all_ispr_words_used = (insn_dec_bignum_i.rf_wdata_sel == RfWdSelIspr);
+
+  // Are we reading just one word of the ISPR data? (case (2) above).
+  logic one_ispr_word_used;
+  assign one_ispr_word_used = ispr_rd_insn & (insn_dec_shared_i.subset == InsnSubsetBase);
+
+  // A bit-mask giving which ISPR words are being read
+  logic [BaseWordsPerWLEN-1:0] ispr_read_mask;
+  assign ispr_read_mask = all_ispr_words_used ? '1 :
+                          one_ispr_word_used  ? ispr_word_sel_base : '0;
+
+  // Use ispr_read_mask to qualify the error bit-mask that came out of the integrity decoder.
+  logic [BaseWordsPerWLEN-1:0] ispr_rdata_used_intg_err;
+  assign ispr_rdata_used_intg_err = ispr_read_mask & ispr_rdata_intg_err_narrow;
+
+  // We only architecturally read the ISPR when there's a non-stalled instruction. This is also the
+  // place where we factor in the special RND_PREFETCH behaviour. We also need to squash any
+  // integrity errors if we're reading a sideload key which isn't currently valid (this will
+  // generate a key_invalid error, but we shouldn't have any behaviour that depends on what happens
+  // to be on the pins)
+  logic non_prefetch_insn_running;
+  assign non_prefetch_insn_running = (insn_valid_i & ~stall &
+                                      (csr_addr != CsrRndPrefetch) & ~key_invalid);
+
+  assign ispr_rdata_intg_err = non_prefetch_insn_running & |(ispr_rdata_used_intg_err);
+
+  `ASSERT_KNOWN(IsprRdataIntgErrKnown_A, ispr_rdata_intg_err)
+
   for (genvar i_bit = 0; i_bit < 32; i_bit++) begin : g_csr_rdata_mux
     for (genvar i_word = 0; i_word < BaseWordsPerWLEN; i_word++) begin : g_csr_rdata_mux_inner
       assign csr_rdata_mux[i_bit][i_word] =
-          ispr_rdata_i[i_word*32 + i_bit] & ispr_word_sel_base[i_word];
+          ispr_rdata[i_word*32 + i_bit] & ispr_word_sel_base[i_word];
     end
 
     assign csr_rdata_raw[i_bit] = |csr_rdata_mux[i_bit];
@@ -1089,7 +1268,7 @@ module otbn_controller
     endcase
   end
 
-  assign wsr_wdata = insn_dec_shared_i.ispr_rs_insn ? ispr_rdata_i | rf_bignum_rd_data_a_no_intg :
+  assign wsr_wdata = insn_dec_shared_i.ispr_rs_insn ? ispr_rdata | rf_bignum_rd_data_a_no_intg :
                                                       rf_bignum_rd_data_a_no_intg;
 
   assign ispr_illegal_addr = insn_dec_shared_i.subset == InsnSubsetBase ? csr_illegal_addr :
@@ -1115,7 +1294,12 @@ module otbn_controller
   assign ispr_base_wr_en_o   = {BaseWordsPerWLEN{ispr_wr_base_insn & insn_valid_i}} &
                                ispr_word_sel_base;
 
-  assign ispr_bignum_wdata_o = wsr_wdata;
+  for (genvar i_word = 0; i_word < BaseWordsPerWLEN; i_word++) begin : g_ispr_bignum_wdata_enc
+    prim_secded_inv_39_32_enc i_secded_enc (
+      .data_i(wsr_wdata[i_word*32+:32]),
+      .data_o(ispr_bignum_wdata_intg_o[i_word*39+:39])
+    );
+  end
   assign ispr_bignum_wr_en_o = ispr_wr_bignum_insn & insn_valid_i;
 
   assign ispr_wr_commit_o = ispr_wr_insn & insn_executing;
@@ -1160,7 +1344,33 @@ module otbn_controller
   assign expected_lsu_addr_en =
     insn_valid_i & (insn_dec_shared_i.ld_insn | insn_dec_shared_i.st_insn);
 
-  assign predec_error_o = expected_lsu_addr_en != lsu_addr_en_predec_i;
+  assign lsu_predec_error = expected_lsu_addr_en != lsu_addr_en_predec_i;
+
+  assign expected_call_stack_push =
+    insn_valid_i & insn_dec_base_i.rf_we & rf_base_wr_addr_o == 5'd1;
+
+  assign expected_call_stack_pop = insn_valid_i &
+                                   ((insn_dec_base_i.rf_ren_a & rf_base_rd_addr_a_o == 5'd1) |
+                                    (insn_dec_base_i.rf_ren_b & rf_base_rd_addr_b_o == 5'd1));
+
+  // Check branch target against the precalculated target from pre-decode. Pre-decode cannot
+  // calculate the jump target of a JALR as it requires a register read so this is excluded from the
+  // check (by looking at the ALU op a selection).
+  assign branch_target_predec_error =
+    insn_dec_shared_i.branch_insn                                            &
+    insn_dec_shared_i.jump_insn & insn_dec_base_i.op_a_sel != OpASelRegister &
+    (ctrl_flow_target_predec_i != branch_target);
+
+  assign ctrl_predec_error =
+    |{ctrl_flow_predec_i.jump            != (insn_dec_shared_i.jump_insn   & insn_valid_i),
+      ctrl_flow_predec_i.loop            != (insn_dec_shared_i.loop_insn   & insn_valid_i),
+      ctrl_flow_predec_i.branch          != (insn_dec_shared_i.branch_insn & insn_valid_i),
+      ctrl_flow_predec_i.call_stack_push != expected_call_stack_push,
+      ctrl_flow_predec_i.call_stack_pop  != expected_call_stack_pop,
+      branch_target_predec_error,
+      loop_predec_err};
+
+  assign predec_error_o = lsu_predec_error | ctrl_predec_error;
 
   // SEC_CM: DATA_REG_SW.SCA
   prim_blanker #(.Width(DmemAddrWidth)) u_lsu_addr_blanker (

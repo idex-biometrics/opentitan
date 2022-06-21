@@ -25,8 +25,8 @@ static void wait_for_csrng_cmd_ready(const dif_csrng_t *csrng) {
   dif_csrng_cmd_status_t cmd_status;
   do {
     CHECK_DIF_OK(dif_csrng_get_cmd_interface_status(csrng, &cmd_status));
-    CHECK(cmd_status != kDifCsrngCmdStatusError);
-  } while (cmd_status != kDifCsrngCmdStatusReady);
+    CHECK(cmd_status.kind != kDifCsrngCmdStatusError);
+  } while (cmd_status.kind != kDifCsrngCmdStatusReady);
 }
 
 /**
@@ -46,11 +46,11 @@ static void check_internal_state(const dif_csrng_t *csrng,
   CHECK(got.reseed_counter == expected->reseed_counter);
   CHECK(got.fips_compliance == expected->fips_compliance);
 
-  CHECK_BUFFER(got.v, expected->v, ARRAYSIZE(expected->v),
-               "CSRNG internal V buffer mismatch.");
+  CHECK_ARRAYS_EQ(got.v, expected->v, ARRAYSIZE(expected->v),
+                  "CSRNG internal V buffer mismatch.");
 
-  CHECK_BUFFER(got.key, expected->key, ARRAYSIZE(expected->key),
-               "CSRNG internal K buffer mismatch.");
+  CHECK_ARRAYS_EQ(got.key, expected->key, ARRAYSIZE(expected->key),
+                  "CSRNG internal K buffer mismatch.");
 }
 
 /**
@@ -97,7 +97,7 @@ static void run_generate_cmd(const dif_csrng_t *csrng, uint32_t *output,
     CHECK_DIF_OK(dif_csrng_get_output_status(csrng, &output_status));
   } while (!output_status.valid_data);
 
-  CHECK_DIF_OK(dif_csrng_generate_end(csrng, output, output_len));
+  CHECK_DIF_OK(dif_csrng_generate_read(csrng, output, output_len));
 }
 
 /**
@@ -124,8 +124,8 @@ static void fips_generate_kat(const dif_csrng_t *csrng) {
       0x2581f391, 0x80b1dc2f, 0xdf82ab22, 0x771c619b, 0xd40fccb1, 0x87189e99,
       0xe48bb8cb, 0x1012c84c, 0x5af8a7f1, 0xd1c07cd9};
 
-  CHECK_BUFFER(got, kExpectedOutput, kExpectedOutputLen,
-               "Generate command KAT output mismatch");
+  CHECK_ARRAYS_EQ(got, kExpectedOutput, kExpectedOutputLen,
+                  "Generate command KAT output mismatch");
 }
 
 /**
@@ -137,7 +137,7 @@ void test_ctr_drbg_ctr0(const dif_csrng_t *csrng) {
   fips_generate_kat(csrng);
 }
 
-bool test_main() {
+bool test_main(void) {
   dif_csrng_t csrng;
   CHECK_DIF_OK(dif_csrng_init(
       mmio_region_from_addr(TOP_EARLGREY_CSRNG_BASE_ADDR), &csrng));

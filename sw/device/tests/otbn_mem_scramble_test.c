@@ -53,7 +53,7 @@ static void otbn_check_mem(otbn_t *ctx, const uint8_t *addr, size_t mem_size,
     CHECK_DIF_OK(otbn_read(&ctx->dif, offset, local_buf, remainder));
     if (match_expected) {
       CHECK(!has_exception_fired, "Unexpected exception");
-      CHECK_BUFFER(addr + offset, local_buf, remainder);
+      CHECK_ARRAYS_EQ(addr + offset, local_buf, remainder);
     } else {
       CHECK(has_exception_fired, "Expected exception haven't fired");
       break;
@@ -89,7 +89,7 @@ static void otbn_check_app(otbn_t *ctx, const otbn_app_t app,
                  dif_otbn_dmem_read);
 }
 
-bool test_main() {
+bool test_main(void) {
   otbn_t otbn_ctx;
   mmio_region_t addr = mmio_region_from_addr(TOP_EARLGREY_OTBN_BASE_ADDR);
   CHECK(otbn_init(&otbn_ctx, addr) == kOtbnOk);

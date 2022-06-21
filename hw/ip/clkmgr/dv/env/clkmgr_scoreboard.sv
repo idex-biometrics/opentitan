@@ -267,13 +267,14 @@ class clkmgr_scoreboard extends cip_base_scoreboard #(
                        })
         end
       end
+      "extclk_status": begin
+        do_read_check = 1'b0;
+      end
       "jitter_regwen": begin
       end
       "jitter_enable": begin
-        if (addr_phase_write) begin
-          if (`gmv(ral.jitter_regwen)) begin
-            `DV_CHECK_EQ(prim_mubi_pkg::mubi4_t'(item.a_data), cfg.clkmgr_vif.jitter_enable_csr)
-          end
+        if (addr_phase_write && `gmv(ral.jitter_regwen)) begin
+          `DV_CHECK_EQ(prim_mubi_pkg::mubi4_t'(item.a_data), cfg.clkmgr_vif.jitter_enable_csr)
         end
       end
       "clk_enables": begin
@@ -294,6 +295,16 @@ class clkmgr_scoreboard extends cip_base_scoreboard #(
       end
       "measure_ctrl_regwen": begin
         if (addr_phase_write) measure_ctrl_regwen = item.a_data;
+      end
+      "io_meas_ctrl_en": begin
+      end
+      "io_div2_meas_ctrl_en": begin
+      end
+      "io_div4_meas_ctrl_en": begin
+      end
+      "main_meas_ctrl_en": begin
+      end
+      "usb_meas_ctrl_en": begin
       end
       "io_meas_ctrl_shadowed": begin
       end

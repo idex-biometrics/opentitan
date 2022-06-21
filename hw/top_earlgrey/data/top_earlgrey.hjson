@@ -141,20 +141,21 @@
       { name: "sys_src",        gen: false, type: "int",                    clk: "io_div4" }
       { name: "por",            gen: true,  type: "top", parent: "por_aon", clk: "main"    }
       { name: "por_io",         gen: true,  type: "top", parent: "por_aon", clk: "io"      }
-      { name: "por_io_div2",    gen: true,  type: "top", parent: "por_aon", clk: "io_div2" }
       { name: "por_io_div4",    gen: true , type: "top", parent: "por_aon", clk: "io_div4" }
-      { name: "por_usb",        gen: true,  type: "top", parent: "por_aon", clk: "usb"     }
       { name: "lc",             gen: true,  type: "top", parent: "lc_src",  clk: "main"    }
-      { name: "lc_io_div4",     gen: true,  type: "top", parent: "lc_src",  clk: "io_div4" }
       { name: "lc_aon",         gen: true,  type: "top", parent: "lc_src",  clk: "aon"     }
+      { name: "lc_io",          gen: true,  type: "top", parent: "lc_src",  clk: "io"      }
+      { name: "lc_io_div2",     gen: true,  type: "top", parent: "lc_src",  clk: "io_div2" }
+      { name: "lc_io_div4",     gen: true,  type: "top", parent: "lc_src",  clk: "io_div4" }
+      { name: "lc_usb",         gen: true,  type: "top", parent: "lc_src",  clk: "usb"  }
       { name: "sys",            gen: true,  type: "top", parent: "sys_src", clk: "main"    }
       { name: "sys_io_div4",    gen: true,  type: "top", parent: "sys_src", clk: "io_div4" }
       { name: "sys_aon",        gen: true,  type: "top", parent: "sys_src", clk: "aon"     }
       { name: "spi_device",     gen: true,  type: "top", parent: "sys_src", clk: "io_div4", sw: true }
       { name: "spi_host0",      gen: true,  type: "top", parent: "sys_src", clk: "io",      sw: true }
       { name: "spi_host1",      gen: true,  type: "top", parent: "sys_src", clk: "io_div2", sw: true }
-      { name: "usb",            gen: true,  type: "top", parent: "sys_src", clk: "io_div4", sw: true }
-      { name: "usbif",          gen: true,  type: "top", parent: "sys_src", clk: "usb",     sw: true }
+      { name: "usb",            gen: true,  type: "top", parent: "sys_src", clk: "usb",     sw: true }
+      { name: "usb_aon",        gen: true,  type: "top", parent: "sys_src", clk: "aon",     sw: true }
       { name: "i2c0",           gen: true,  type: "top", parent: "sys_src", clk: "io_div4", sw: true },
       { name: "i2c1",           gen: true,  type: "top", parent: "sys_src", clk: "io_div4", sw: true },
       { name: "i2c2",           gen: true,  type: "top", parent: "sys_src", clk: "io_div4", sw: true },
@@ -288,16 +289,6 @@
       reset_connections: {rst_ni: "sys_io_div4"},
       base_addr: "0x40100000",
     },
-    { name: "usbdev",
-      type: "usbdev",
-      clock_srcs: {clk_i: "io_div4", clk_aon_i: "aon", clk_usb_48mhz_i: "usb"},
-      clock_group: "peri",
-      reset_connections: {rst_ni: "usb", rst_aon_ni: "sys_aon", rst_usb_48mhz_ni: "usbif"},
-      base_addr: "0x40110000",
-      param_decl: {
-        RcvrWakeTimeUs: "100"
-      },
-    },
     { name: "otp_ctrl",
       type: "otp_ctrl",
       clock_srcs: {clk_i: "io_div4", clk_edn_i: "main"},
@@ -312,8 +303,8 @@
       reset_connections: {rst_ni: "lc_io_div4", rst_kmac_ni: "sys"},
       base_addr: "0x40140000",
       param_decl: {
-        ChipGen: "16'h 00001",
-        ChipRev: "16'h 00001",
+        ChipGen: "16'h 00000",
+        ChipRev: "16'h 00000",
         IdcodeValue: "jtag_id_pkg::JTAG_IDCODE",
       },
     },
@@ -338,6 +329,16 @@
       clock_group: "peri",
       reset_connections: {rst_ni: "spi_host1"},
       base_addr: "0x40310000",
+    },
+    { name: "usbdev",
+      type: "usbdev",
+      clock_srcs: {clk_i: "usb", clk_aon_i: "aon", clk_usb_48mhz_i: "usb"},
+      clock_group: "peri",
+      reset_connections: {rst_ni: "usb", rst_aon_ni: "usb_aon", rst_usb_48mhz_ni: "usb"},
+      base_addr: "0x40320000",
+      param_decl: {
+        RcvrWakeTimeUs: "100"
+      },
     },
     { name: "pwrmgr_aon",
       type: "pwrmgr",
@@ -405,13 +406,14 @@
         }
       },
       clock_group: "powerup",
-      reset_connections: {rst_ni: "por_io_div4",
-                          rst_main_ni: "por",
-                          rst_io_ni: "por_io",
-                          rst_usb_ni: "por_usb",
-                          rst_io_div2_ni: "por_io_div2",
-                          rst_io_div4_ni: "por_io_div4",
-                          rst_aon_ni: "por_aon"
+      reset_connections: {rst_ni: "lc_io_div4",
+                          rst_aon_ni: "lc_aon"
+                          rst_io_ni: "lc_io",
+                          rst_io_div2_ni: "lc_io_div2",
+                          rst_io_div4_ni: "lc_io_div4",
+                          rst_main_ni: "lc",
+                          rst_usb_ni: "lc_usb",
+                          rst_por_io_ni: "por_io",
                          },
       domain: ["Aon"],
       base_addr: "0x40420000",
@@ -445,7 +447,7 @@
       type: "pinmux",
       clock_srcs: {clk_i: "io_div4", clk_aon_i: "aon"},
       clock_group: "powerup",
-      reset_connections: {rst_ni: "sys_io_div4", rst_aon_ni: "sys_aon"},
+      reset_connections: {rst_ni: "lc_io_div4", rst_aon_ni: "lc_aon"},
       domain: ["Aon"],
       base_addr: "0x40460000",
       attr: "templated",
@@ -491,7 +493,7 @@
           domain: "0",
         },
         rst_ast_usb_ni: {
-          name: "usbif",
+          name: "usb",
           domain: "0"
         }
       },
@@ -720,6 +722,7 @@
                    ICacheScramble: "1",
                    BranchPredictor: "0",
                    DbgTriggerEn: "1",
+                   DbgHwBreakNum: "4",
                    SecureIbex: "1",
                    DmHaltAddr: "tl_main_pkg::ADDR_SPACE_RV_DM__ROM + dm::HaltAddress[31:0]",
                    DmExceptionAddr: "tl_main_pkg::ADDR_SPACE_RV_DM__ROM + dm::ExceptionAddress[31:0]",
@@ -866,15 +869,13 @@
       'csrng.entropy_src_hw_if' : ['entropy_src.entropy_src_hw_if'],
 
       // usbdev connection to pinmux
-      'usbdev.usb_dp_pullup'      : ['pinmux_aon.usb_dppullup_en_upwr'],
-      'usbdev.usb_dn_pullup'      : ['pinmux_aon.usb_dnpullup_en_upwr'],
-      'usbdev.usb_out_of_rst'     : ['pinmux_aon.usb_out_of_rst'],
-      'usbdev.usb_aon_wake_en'    : ['pinmux_aon.usb_aon_wake_en'],
-      'usbdev.usb_aon_wake_ack'   : ['pinmux_aon.usb_aon_wake_ack'],
-      'usbdev.usb_suspend'        : ['pinmux_aon.usb_suspend'],
-      'usbdev.usb_aon_bus_reset'  : ['pinmux_aon.usb_bus_reset'],
-      'usbdev.usb_aon_sense_lost' : ['pinmux_aon.usb_sense_lost'],
-      'pinmux_aon.usb_state_debug' : ['usbdev.usb_state_debug'],
+      'usbdev.usb_dp_pullup'      : ['pinmux_aon.usbdev_dppullup_en'],
+      'usbdev.usb_dn_pullup'      : ['pinmux_aon.usbdev_dnpullup_en'],
+      'usbdev.usb_aon_suspend_req': ['pinmux_aon.usbdev_suspend_req'],
+      'usbdev.usb_aon_wake_ack'   : ['pinmux_aon.usbdev_wake_ack'],
+      'usbdev.usb_aon_bus_reset'  : ['pinmux_aon.usbdev_bus_reset'],
+      'usbdev.usb_aon_sense_lost' : ['pinmux_aon.usbdev_sense_lost'],
+      'pinmux_aon.usbdev_wake_detect_active' : ['usbdev.usb_aon_wake_detect_active'],
 
       // Edn connections
       'edn0.edn'              : ['keymgr.edn', 'otp_ctrl.edn', 'ast.edn', 'kmac.entropy',
@@ -1032,6 +1033,7 @@
         'clkmgr_aon.all_clk_byp_ack'      : 'all_clk_byp_ack',
         'clkmgr_aon.hi_speed_sel'         : 'hi_speed_sel',
         'clkmgr_aon.div_step_down_req'    : 'div_step_down_req',
+        'clkmgr_aon.calib_rdy'            : 'calib_rdy',
         'flash_ctrl.flash_alert'          : 'flash_alert',
         'flash_ctrl.flash_bist_enable'    : 'flash_bist_enable',
         'flash_ctrl.flash_power_down_h'   : 'flash_power_down_h',
@@ -1063,7 +1065,6 @@
         'usbdev.usb_tx_d'                 : '',
         'usbdev.usb_tx_se0'               : '',
         'usbdev.usb_tx_use_d_se0'         : '',
-        'usbdev.usb_suspend'              : '',
         'usbdev.usb_rx_enable'            : '',
         'usbdev.usb_ref_val'              : '',
         'usbdev.usb_ref_pulse'            : '',
@@ -1077,12 +1078,14 @@
     { name: "main",
       clock_srcs: {clk_main_i: "main",
                    clk_fixed_i: "io_div4",
+                   clk_usb_i: "usb",
                    clk_spi_host0_i: "io",
                    clk_spi_host1_i: "io_div2"},
       clock_group: "infra",
       reset: "sys",
       reset_connections: {rst_main_ni: "sys",
                           rst_fixed_ni: "sys_io_div4",
+                          rst_usb_ni: "usb",
                           rst_spi_host0_ni: "spi_host0",
                           rst_spi_host1_ni: "spi_host1"}
     },
@@ -1376,9 +1379,9 @@
           'SPI_DEV_D2', 'SPI_DEV_D3'
           'FLASH_TEST_VOLT', 'OTP_EXT_VOLT'
           'FLASH_TEST_MODE0', 'FLASH_TEST_MODE1',
-          'IOB10', 'IOB11', 'IOB12',
-          'IOC0', 'IOC1', 'IOC12',
-          'IOR1', 'IOR2', 'IOR3', 'IOR4', 'IOR5', 'IOR6', 'IOR7', 'IOR8', 'IOR9', 'IOR10', 'IOR11', 'IOR12', 'IOR13',
+          'IOB3', 'IOB6', 'IOB7', 'IOB8', 'IOB9', 'IOB10', 'IOB11', 'IOB12',
+          'IOC12',
+          'IOR1', 'IOR2', 'IOR3', 'IOR5', 'IOR6', 'IOR7', 'IOR8', 'IOR9', 'IOR10', 'IOR11', 'IOR12', 'IOR13',
           'USB_P', 'USB_N'
         ],
 
@@ -1405,63 +1408,14 @@
       pinmux: {
         special_signals: [
           // Straps
-          { name: 'tap0',   pad: 'IOC0' ,        desc: 'TAP strap signal, maps to a stubbed-off MIO.'  },
-          { name: 'tap1',   pad: 'IOB7',         desc: 'TAP strap signal, maps to MIO pad 16.'         },
-          { name: 'dft0',   pad: 'IOC1' ,        desc: 'DFT strap signal, maps to a stubbed-off MIO.'  },
-          { name: 'dft1',   pad: 'IOC12',        desc: 'DFT strap signal, maps to a stubbed-off MIO.'  },
+          { name: 'tap0',   pad: 'IOC8',         desc: 'TAP strap signal.'                       },
+          { name: 'tap1',   pad: 'IOC5',         desc: 'TAP strap signal.'                       },
+          { name: 'dft0',   pad: 'IOC3',         desc: 'DFT strap signal.'                       },
+          { name: 'dft1',   pad: 'IOC4',         desc: 'DFT strap signal.'                       },
           // JTAG
           { name: 'tck',    pad: 'SPI_DEV_CLK' , desc: 'JTAG tck signal, overlaid on SPI_DEV.'   },
           { name: 'tms',    pad: 'SPI_DEV_CS_L', desc: 'JTAG tms signal, overlaid on SPI_DEV.'   },
-          { name: 'trst_n', pad: 'IOB9'        , desc: 'JTAG trst_n signal, maps to MIO pad 18.' },
-          { name: 'tdi',    pad: 'SPI_DEV_D0'  , desc: 'JTAG tdi signal, overlaid on SPI_DEV.'   },
-          { name: 'tdo',    pad: 'SPI_DEV_D1'  , desc: 'JTAG tdo signal, overlaid on SPI_DEV.'   },
-        ],
-      }
-    }
-    { name: 'nexysvideo',
-
-      pinout: {
-        remove_ports: [],
-        remove_pads: [
-          'CC1', 'CC2',
-          'SPI_DEV_D2', 'SPI_DEV_D3'
-          'SPI_HOST_CLK', 'SPI_HOST_CS_L',
-          'SPI_HOST_D0', 'SPI_HOST_D1', 'SPI_HOST_D2', 'SPI_HOST_D3',
-          'FLASH_TEST_VOLT', 'OTP_EXT_VOLT'
-          'FLASH_TEST_MODE0', 'FLASH_TEST_MODE1',
-          'IOB10', 'IOB11', 'IOB12',
-          'IOC0', 'IOC1', 'IOC12',
-          'IOR2', 'IOR3', 'IOR4', 'IOR5', 'IOR6', 'IOR7', 'IOR8', 'IOR9', 'IOR10', 'IOR11', 'IOR12', 'IOR13'
-        ],
-
-        add_pads: [
-          // Additional infrastructure pads
-          { name: 'IO_CLK',           type: 'InputStd', bank: 'VCC', connection: 'manual', desc: 'Extra clock input for FPGA target'}
-          { name: 'IO_JSRST_N',       type: 'InputStd', bank: 'VCC', connection: 'manual', desc: 'Dedicated JTAG system reset input'}
-          // Custom USB pads
-          { name: 'IO_USB_DNPULLUP0', type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB signal for FPGA target'}
-          { name: 'IO_USB_DPPULLUP0', type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB signal for FPGA target'}
-          { name: 'IO_UPHY_DP_TX',    type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB UPHY signal for FPGA target'}
-          { name: 'IO_UPHY_DN_TX',    type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB UPHY signal for FPGA target'}
-          { name: 'IO_UPHY_DP_RX',    type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB UPHY signal for FPGA target'}
-          { name: 'IO_UPHY_DN_RX',    type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB UPHY signal for FPGA target'}
-          { name: 'IO_UPHY_D_RX',     type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB UPHY signal for FPGA target'}
-          { name: 'IO_UPHY_OE_N',     type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB UPHY signal for FPGA target'}
-          { name: 'IO_UPHY_DPPULLUP', type: 'BidirStd', bank: 'VCC', connection: 'manual', desc: 'Manual USB UPHY signal for FPGA target'}
-        ],
-      },
-
-      pinmux: {
-        special_signals: [
-          // Straps
-          { name: 'tap0',   pad: 'IOC0' ,        desc: 'TAP strap signal, maps to a stubbed-off MIO.'  },
-          { name: 'tap1',   pad: 'IOB7',         desc: 'TAP strap signal, maps to MIO pad 16.'         },
-          { name: 'dft0',   pad: 'IOC1' ,        desc: 'DFT strap signal, maps to a stubbed-off MIO.'  },
-          { name: 'dft1',   pad: 'IOC12',        desc: 'DFT strap signal, maps to a stubbed-off MIO.'  },
-          // JTAG
-          { name: 'tck',    pad: 'SPI_DEV_CLK' , desc: 'JTAG tck signal, overlaid on SPI_DEV.'   },
-          { name: 'tms',    pad: 'SPI_DEV_CS_L', desc: 'JTAG tms signal, overlaid on SPI_DEV.'   },
-          { name: 'trst_n', pad: 'IOB9'        , desc: 'JTAG trst_n signal, maps to MIO pad 18.' },
+          { name: 'trst_n', pad: 'IOR4',         desc: 'JTAG trst_n signal.'                     },
           { name: 'tdi',    pad: 'SPI_DEV_D0'  , desc: 'JTAG tdi signal, overlaid on SPI_DEV.'   },
           { name: 'tdo',    pad: 'SPI_DEV_D1'  , desc: 'JTAG tdo signal, overlaid on SPI_DEV.'   },
         ],

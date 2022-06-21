@@ -2,10 +2,23 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
-load("//rules:opentitan_test.bzl", "opentitan_functest", "verilator_params")
+load("//rules:opentitan_test.bzl", "cw310_params", "opentitan_functest", "verilator_params")
 load("//rules:cross_platform.bzl", "dual_cc_device_library_of", "dual_cc_library", "dual_inputs")
 
 package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "english_breakfast_test_rom_driver_srcs",
+    srcs = [
+        "flash_ctrl.c",
+        "flash_ctrl.h",
+        "lifecycle.h",
+        "otp.h",
+        "rstmgr.h",
+        "spi_device.c",
+        "spi_device.h",
+    ],
+)
 
 dual_cc_library(
     name = "alert",
@@ -55,9 +68,9 @@ opentitan_functest(
     deps = [
         ":alert",
         ":rstmgr",
-        "//hw/ip/flash_ctrl/data:flash_ctrl_regs",
         "//hw/ip/otp_ctrl/data:otp_ctrl_regs",
         "//hw/top_earlgrey:alert_handler_regs",
+        "//hw/top_earlgrey/ip/flash_ctrl/data/autogen:flash_ctrl_regs",
         "//hw/top_earlgrey/ip/rstmgr/data/autogen:rstmgr_regs",
         "//hw/top_earlgrey/sw/autogen:top_earlgrey",
         "//sw/device/lib/base:abs_mmio",
@@ -68,29 +81,75 @@ opentitan_functest(
 )
 
 cc_library(
-    name = "flash_ctrl",
-    srcs = ["flash_ctrl.c"],
-    hdrs = ["flash_ctrl.h"],
+    name = "ast",
+    srcs = ["ast.c"],
+    hdrs = ["ast.h"],
     deps = [
-        "//hw/ip/flash_ctrl/data:flash_ctrl_regs",
+        ":lifecycle",
+        ":otp",
         "//hw/ip/otp_ctrl/data:otp_ctrl_regs",
+        "//hw/top_earlgrey/ip/sensor_ctrl/data:sensor_ctrl_regs",
         "//hw/top_earlgrey/sw/autogen:top_earlgrey",
+        "//sw/device/lib/arch:device",
         "//sw/device/lib/base:abs_mmio",
         "//sw/device/lib/base:bitfield",
+        "//sw/device/lib/base:csr",
         "//sw/device/lib/base:hardened",
         "//sw/device/lib/base:memory",
         "//sw/device/lib/base:multibits",
         "//sw/device/silicon_creator/lib:error",
-        "//sw/device/silicon_creator/lib/base:sec_mmio",
-        "//sw/device/silicon_creator/lib/drivers:otp",
     ],
+)
+
+cc_test(
+    name = "ast_unittest",
+    srcs = ["ast_unittest.cc"],
+    deps = [
+        ":ast",
+        "//sw/device/silicon_creator/testing:mask_rom_test",
+        "@googletest//:gtest_main",
+    ],
+)
+
+dual_cc_library(
+    name = "flash_ctrl",
+    srcs = dual_inputs(
+        device = ["flash_ctrl.c"],
+        host = ["mock_flash_ctrl.cc"],
+    ),
+    hdrs = dual_inputs(
+        host = ["mock_flash_ctrl.h"],
+        shared = ["flash_ctrl.h"],
+    ),
+    deps = dual_inputs(
+        device = [
+            "//hw/top_earlgrey/ip/flash_ctrl/data/autogen:flash_ctrl_regs",
+            "//hw/ip/otp_ctrl/data:otp_ctrl_regs",
+            "//hw/top_earlgrey/sw/autogen:top_earlgrey",
+        ],
+        host = [
+            "//sw/device/lib/base/testing:global_mock",
+            "//sw/device/silicon_creator/testing:mask_rom_test",
+            "@googletest//:gtest",
+        ],
+        shared = [
+            "//sw/device/lib/base:abs_mmio",
+            "//sw/device/lib/base:bitfield",
+            "//sw/device/lib/base:hardened",
+            "//sw/device/lib/base:memory",
+            "//sw/device/lib/base:multibits",
+            "//sw/device/silicon_creator/lib:error",
+            "//sw/device/silicon_creator/lib/base:sec_mmio",
+            "//sw/device/silicon_creator/lib/drivers:otp",
+        ],
+    ),
 )
 
 cc_test(
     name = "flash_ctrl_unittest",
     srcs = ["flash_ctrl_unittest.cc"],
     deps = [
-        ":flash_ctrl",
+        dual_cc_device_library_of(":flash_ctrl"),
         "@googletest//:gtest_main",
     ],
 )
@@ -160,6 +219,17 @@ cc_library(
         "//hw/ip/rv_core_ibex/data:rv_core_ibex_regs",
         "//hw/top_earlgrey/sw/autogen:top_earlgrey",
         "//sw/device/lib/base:abs_mmio",
+        "//sw/device/silicon_creator/lib/base:sec_mmio",
+    ],
+)
+
+cc_test(
+    name = "ibex_unittest",
+    srcs = ["ibex_unittest.cc"],
+    deps = [
+        ":ibex",
+        "//sw/device/silicon_creator/testing:mask_rom_test",
+        "@googletest//:gtest_main",
     ],
 )
 
@@ -191,22 +261,17 @@ cc_test(
 opentitan_functest(
     name = "keymgr_functest",
     srcs = ["keymgr_functest.c"],
-    # FIXME: currently, the FPGA doesn't wake up from low-power mode.
-    # For now, run the test only in verilator.
-    targets = ["verilator"],
-    verilator = verilator_params(
-        timeout = "long",
-    ),
     deps = [
         ":keymgr",
         ":lifecycle",
+        "//hw/ip/kmac/data:kmac_regs",
         "//hw/top_earlgrey/sw/autogen:top_earlgrey",
-        "//sw/device/lib/dif:aon_timer",
         "//sw/device/lib/dif:flash_ctrl",
         "//sw/device/lib/dif:kmac",
         "//sw/device/lib/dif:otp_ctrl",
-        "//sw/device/lib/dif:pwrmgr",
+        "//sw/device/lib/dif:rstmgr",
         "//sw/device/lib/testing:flash_ctrl_testutils",
+        "//sw/device/lib/testing:otp_ctrl_testutils",
         "//sw/device/lib/testing:pwrmgr_testutils",
         "//sw/device/lib/testing/test_framework:ottf_main",
         "//sw/device/silicon_creator/lib:error",
@@ -267,6 +332,8 @@ cc_library(
         "//sw/device/lib/base:abs_mmio",
         "//sw/device/lib/base:bitfield",
         "//sw/device/silicon_creator/lib:error",
+        "//sw/device/silicon_creator/lib/base:sec_mmio",
+        "//sw/device/silicon_creator/lib/drivers:rnd",
     ],
 )
 
@@ -401,12 +468,12 @@ dual_cc_library(
     deps = dual_inputs(
         device = [
             ":otp",
+            "//sw/device/lib/base:csr",
+            "//sw/device/lib/base:abs_mmio",
+            "//sw/device/lib/base:hardened",
             "//hw/ip/otp_ctrl/data:otp_ctrl_regs",
             "//hw/ip/rv_core_ibex/data:rv_core_ibex_regs",
             "//hw/top_earlgrey/sw/autogen:top_earlgrey",
-            "//sw/device/lib/base:abs_mmio",
-            "//sw/device/lib/base:csr",
-            "//sw/device/lib/base:hardened",
         ],
         host = [
             "//sw/device/lib/base/testing:global_mock",
@@ -418,6 +485,23 @@ dual_cc_library(
             "//sw/device/silicon_creator/lib:error",
         ],
     ),
+)
+
+cc_test(
+    name = "rnd_unittest",
+    srcs = ["rnd_unittest.cc"],
+    deps = [
+        dual_cc_device_library_of(":rnd"),
+        ":otp",
+        "//hw/ip/otp_ctrl/data:otp_ctrl_regs",
+        "//hw/ip/rv_core_ibex/data:rv_core_ibex_regs",
+        "//hw/top_earlgrey/sw/autogen:top_earlgrey",
+        "//sw/device/lib/base:abs_mmio",
+        "//sw/device/lib/base:csr",
+        "//sw/device/silicon_creator/lib/base:sec_mmio",
+        "//sw/device/silicon_creator/testing:mask_rom_test",
+        "@googletest//:gtest_main",
+    ],
 )
 
 opentitan_functest(
@@ -432,27 +516,42 @@ opentitan_functest(
     ],
 )
 
-cc_library(
+dual_cc_library(
     name = "rstmgr",
-    srcs = ["rstmgr.c"],
-    hdrs = ["rstmgr.h"],
-    deps = [
-        "//hw/top_earlgrey/ip/rstmgr/data/autogen:rstmgr_regs",
-        "//hw/top_earlgrey/sw/autogen:top_earlgrey",
-        "//sw/device/lib/base:bitfield",
-        "//sw/device/lib/base:macros",
-        "//sw/device/lib/base:multibits",
-        "//sw/device/lib/runtime:hart",
-        "//sw/device/silicon_creator/lib:error",
-        "//sw/device/silicon_creator/lib/base:sec_mmio",
-    ],
+    srcs = dual_inputs(
+        device = ["rstmgr.c"],
+        host = ["mock_rstmgr.cc"],
+    ),
+    hdrs = dual_inputs(
+        host = ["mock_rstmgr.h"],
+        shared = ["rstmgr.h"],
+    ),
+    deps = dual_inputs(
+        device = [
+            "//hw/top_earlgrey/ip/rstmgr/data/autogen:rstmgr_regs",
+            "//hw/top_earlgrey/sw/autogen:top_earlgrey",
+        ],
+        host = [
+            "//sw/device/lib/base/testing:global_mock",
+            "//sw/device/silicon_creator/testing:mask_rom_test",
+            "@googletest//:gtest",
+        ],
+        shared = [
+            "//sw/device/lib/base:bitfield",
+            "//sw/device/lib/base:macros",
+            "//sw/device/lib/base:multibits",
+            "//sw/device/lib/runtime:hart",
+            "//sw/device/silicon_creator/lib:error",
+            "//sw/device/silicon_creator/lib/base:sec_mmio",
+        ],
+    ),
 )
 
 cc_test(
     name = "rstmgr_unittest",
     srcs = ["rstmgr_unittest.cc"],
     deps = [
-        ":rstmgr",
+        dual_cc_device_library_of(":rstmgr"),
         "//sw/device/silicon_creator/testing:mask_rom_test",
         "@googletest//:gtest_main",
     ],
@@ -548,18 +647,34 @@ opentitan_functest(
     ],
 )
 
-cc_library(
+dual_cc_library(
     name = "spi_device",
-    srcs = ["spi_device.c"],
-    hdrs = ["spi_device.h"],
-    deps = [
-        "//hw/ip/flash_ctrl/data:flash_ctrl_regs",
-        "//hw/ip/spi_device/data:spi_device_regs",
-        "//hw/top_earlgrey/sw/autogen:top_earlgrey",
-        "//sw/device/lib/base:abs_mmio",
-        "//sw/device/lib/base:memory",
-        "//sw/device/silicon_creator/lib:error",
-    ],
+    srcs = dual_inputs(
+        device = ["spi_device.c"],
+        host = ["mock_spi_device.cc"],
+    ),
+    hdrs = dual_inputs(
+        host = ["mock_spi_device.h"],
+        shared = ["spi_device.h"],
+    ),
+    deps = dual_inputs(
+        device = [
+            "//hw/top_earlgrey/ip/flash_ctrl/data/autogen:flash_ctrl_regs",
+            "//hw/ip/spi_device/data:spi_device_regs",
+            "//hw/top_earlgrey/sw/autogen:top_earlgrey",
+        ],
+        host = [
+            "//sw/device/lib/base/testing:global_mock",
+            "//sw/device/silicon_creator/testing:mask_rom_test",
+            "@googletest//:gtest",
+        ],
+        shared = [
+            ":lifecycle",
+            "//sw/device/lib/base:abs_mmio",
+            "//sw/device/lib/base:memory",
+            "//sw/device/silicon_creator/lib:error",
+        ],
+    ),
 )
 
 cc_test(
@@ -568,7 +683,7 @@ cc_test(
         "spi_device_unittest.cc",
     ],
     deps = [
-        ":spi_device",
+        dual_cc_device_library_of(":spi_device"),
         "//hw/ip/spi_device/data:spi_device_regs",
         "//hw/top_earlgrey/sw/autogen:top_earlgrey",
         "//sw/device/lib/base:abs_mmio",

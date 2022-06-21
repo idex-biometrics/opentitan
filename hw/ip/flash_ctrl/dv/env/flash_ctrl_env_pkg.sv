@@ -75,12 +75,12 @@ package flash_ctrl_env_pkg;
   parameter uint FlashFullDataWidth = flash_ctrl_pkg::DataWidth + 4;
 
   // params for words
-  parameter uint NUM_PAGE_WORDS    = FlashNumBusWordsPerPage;
+  parameter uint NUM_PAGE_WORDS = FlashNumBusWordsPerPage;
   parameter uint NUM_BK_DATA_WORDS = FlashNumBusWordsPerBank;  // 256 pages
-  parameter uint NUM_BK_INFO_WORDS = InfoTypeBusWords[0];      // 10 pages
+  parameter uint NUM_BK_INFO_WORDS = InfoTypeBusWords[0];  // 10 pages
 
   // params for num of pages
-  parameter uint NUM_PAGE_PART_DATA  = flash_ctrl_pkg::PagesPerBank;
+  parameter uint NUM_PAGE_PART_DATA = flash_ctrl_pkg::PagesPerBank;
   parameter uint NUM_PAGE_PART_INFO0 = flash_ctrl_pkg::InfoTypeSize[0];
   parameter uint NUM_PAGE_PART_INFO1 = flash_ctrl_pkg::InfoTypeSize[1];
   parameter uint NUM_PAGE_PART_INFO2 = flash_ctrl_pkg::InfoTypeSize[2];
@@ -118,6 +118,21 @@ package flash_ctrl_env_pkg;
   parameter uint CODE_EXEC_KEY_W = 32;
   parameter uint CODE_EXEC_KEY = 32'ha26a38f7;
 
+  // MP Access Flags
+  parameter bit MP_PASS      = 0;
+  parameter bit MP_VIOLATION = 1;
+
+  // Flash Error Bits (flash_ctrl.err_code)
+  parameter uint NumFlashErrBits  = 8;
+  parameter uint FlashOpErr       = 0;
+  parameter uint FlashMpErr       = 1;
+  parameter uint FlashRdErr       = 2;
+  parameter uint FlashProgErr     = 3;
+  parameter uint FlashProgWinErr  = 4;
+  parameter uint FlashProgTypeErr = 5;
+  parameter uint FlashMacroErr    = 6;
+  parameter uint FlashUpdateErr   = 7;
+
   // types
   typedef enum int {
     FlashCtrlIntrProgEmpty = 0,
@@ -145,6 +160,12 @@ package flash_ctrl_env_pkg;
     FlashPartInfo2 = 4
   } flash_dv_part_e;
 
+  // Program Type Select Normal/Repair
+  typedef enum bit {
+    FlashProgSelNormal = 0,
+    FlashProgSelRepair = 1
+  } flash_prog_sel_e;
+
   // Special Partitions
   typedef enum logic [2:0] {
     FlashCreatorPart = 0,
@@ -155,21 +176,21 @@ package flash_ctrl_env_pkg;
   } flash_sec_part_e;
 
   typedef enum {
-    AllOnes,       // All 1s
-    AllZeros,      // All 0s
-    CustomVal      // Custom Value
+    AllOnes,   // All 1s
+    AllZeros,  // All 0s
+    CustomVal  // Custom Value
   } flash_scb_wr_e;
 
   typedef struct packed {
-    mubi4_t  en;           // enable this region
-    mubi4_t  read_en;      // enable reads
-    mubi4_t  program_en;   // enable write
-    mubi4_t  erase_en;     // enable erase
-    mubi4_t  scramble_en;  // enable scramble
-    mubi4_t  ecc_en;       // enable ecc
-    mubi4_t  he_en;        // enable high endurance
-    uint num_pages;        // 0:NumPages % start_page
-    uint start_page;       // 0:NumPages-1
+    mubi4_t en;           // enable this region
+    mubi4_t read_en;      // enable reads
+    mubi4_t program_en;   // enable write
+    mubi4_t erase_en;     // enable erase
+    mubi4_t scramble_en;  // enable scramble
+    mubi4_t ecc_en;       // enable ecc
+    mubi4_t he_en;        // enable high endurance
+    uint    num_pages;    // 0:NumPages % start_page
+    uint    start_page;   // 0:NumPages-1
   } flash_mp_region_cfg_t;
 
   typedef struct packed {
@@ -182,22 +203,31 @@ package flash_ctrl_env_pkg;
     mubi4_t he_en;        // enable high endurance
   } flash_bank_mp_info_page_cfg_t;
 
+  // 2-states flash data type
+  typedef bit [TL_DW-1:0] data_t;
+  // 4-states flash data type
+  typedef logic [TL_DW-1:0] data_4s_t;
+  // flash address type
+  typedef bit [TL_AW-1:0] addr_t;
+  // Queue of 4-states data words
+  typedef data_4s_t data_q_t[$];
+  // Queue of 2-states data words
+  typedef data_t data_b_t[$];
+  // Array of 2-states data words indexed with flash addresses.
+  // Useful for the flash model.
+  typedef data_t data_model_t[addr_t];
+
   typedef struct packed {
-    flash_dv_part_e partition;   // data or one of the info partitions
-    flash_erase_e   erase_type;  // erase page or the whole bank
-    flash_op_e      op;          // read / program or erase
-    uint            num_words;   // number of words to read or program (TL_DW)
-    bit [TL_AW-1:0] addr;        // starting addr for the op
+    flash_dv_part_e  partition;   // data or one of the info partitions
+    flash_erase_e    erase_type;  // erase page or the whole bank
+    flash_op_e       op;          // read / program or erase
+    flash_prog_sel_e prog_sel;    // program select
+    uint             num_words;   // number of words to read or program (TL_DW)
+    addr_t           addr;        // starting addr for the op
   } flash_op_t;
 
-  // Data queue for flash transactions
-  typedef logic [TL_DW-1:0] data_q_t[$];
-  typedef bit [TL_DW-1:0] data_b_t[$];
-  typedef bit [TL_DW-1:0] data_t;
-  typedef bit [TL_AW-1:0] addr_t;
-
   parameter uint ALL_ZEROS = 32'h0000_0000;
-  parameter uint ALL_ONES  = 32'hffff_ffff;
+  parameter uint ALL_ONES = 32'hffff_ffff;
 
   // Parameter for Probing into the DUT RMA FSM
   parameter string PRB_RMA_FSM = "tb.dut.u_flash_hw_if.state_q";

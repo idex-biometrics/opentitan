@@ -10,6 +10,7 @@
 #include "sw/device/lib/base/mmio.h"
 #include "sw/device/lib/dif/dif_lc_ctrl.h"
 #include "sw/device/lib/runtime/log.h"
+#include "sw/device/lib/testing/lc_ctrl_testutils.h"
 #include "sw/device/lib/testing/test_framework/check.h"
 
 #include "hw/top_earlgrey/sw/autogen/top_earlgrey.h"
@@ -38,16 +39,6 @@ static volatile const uint8_t kLcExitToken[LC_TOKEN_SIZE] = {
     0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 };
 
-static void check_lc_state_transition_count(uint8_t exp_lc_count) {
-  LOG_INFO("Read LC count and check with expect_val=%0d", exp_lc_count);
-  uint8_t lc_count;
-  CHECK(dif_lc_ctrl_get_attempts(&lc, &lc_count) == kDifOk,
-        "Read lc_count register failed!");
-  CHECK(lc_count == exp_lc_count,
-        "LC_count error, expected %0d but actual count is %0d", exp_lc_count,
-        lc_count);
-}
-
 /**
  * Tests the state transition request handshake between LC_CTRL and OTP_CTRL.
  *
@@ -58,12 +49,16 @@ static void check_lc_state_transition_count(uint8_t exp_lc_count) {
  * 3). `TestLocked1` state disabled CPU, so external testbench will drive JTAG
  * interface to transit to `TestUnlocked2` state and increment the LC_CNT.
  * 4). When LC_CTRL is ready, check LC_CNT and LC_STATE register.
- * 5). Program LC state transition request to advance to `Prod` state.
+ * 5). Program LC state transition request to advance to `Dev` state.
  * 6). Issue hard reset.
  * 7). Wait for LC_CTRL is ready, then check if LC_STATE advanced to `Dev`
  * state, and lc_count advanced to `9`.
  * 8). Issue hard reset and override OTP's LC partition, and reset LC state to
- * `TestUnlocked2` state.
+ * `TestLocked1` state.
+ * 9). Repeat the steps above in a few iterations.
+ *
+ * In summary, this sequence walks through the following LC states:
+ * "TestLocked1" -> "TestUnlocked2" -> "Dev"
  */
 
 bool execute_lc_ctrl_transition_test(bool use_ext_clk) {
@@ -85,20 +80,18 @@ bool execute_lc_ctrl_transition_test(bool use_ext_clk) {
   if (curr_state == kDifLcCtrlStateTestUnlocked2) {
     // LC TestUnlocked2 is the intial test state for this sequence.
     // The sequence will check if lc_count matches the preload value.
-    check_lc_state_transition_count(kLcStateTransitionCount);
+    lc_ctrl_testutils_check_transition_count(&lc, kLcStateTransitionCount);
 
     // Request lc_state transfer to Dev state.
     dif_lc_ctrl_token_t token;
-    dif_lc_ctrl_settings_t settings;
-    settings.clock_select =
-        use_ext_clk ? kDifLcCtrlExternalClockEn : kDifLcCtrlInternalClockEn;
     for (int i = 0; i < LC_TOKEN_SIZE; i++) {
       token.data[i] = kLcExitToken[i];
     }
-    CHECK(dif_lc_ctrl_mutex_try_acquire(&lc) == kDifOk);
-    CHECK(dif_lc_ctrl_transition(&lc, kDifLcCtrlStateDev, &token, &settings) ==
-              kDifOk,
-          "LC_transition failed!");
+    CHECK_DIF_OK(dif_lc_ctrl_mutex_try_acquire(&lc));
+    CHECK_DIF_OK(
+        dif_lc_ctrl_configure(&lc, kDifLcCtrlStateDev, use_ext_clk, &token),
+        "LC transition configuration failed!");
+    CHECK_DIF_OK(dif_lc_ctrl_transition(&lc), "LC transition failed!");
 
     LOG_INFO("Waiting for LC transtition done and reboot.");
     wait_for_interrupt();
@@ -108,7 +101,7 @@ bool execute_lc_ctrl_transition_test(bool use_ext_clk) {
     // Once the sequence checks current state and count via CSRs, the test can
     // exit successfully.
     CHECK(curr_state == kDifLcCtrlStateDev, "State transition failed!");
-    check_lc_state_transition_count(kLcStateTransitionCount + 1);
+    lc_ctrl_testutils_check_transition_count(&lc, kLcStateTransitionCount + 1);
     return true;
   }
 

@@ -7,10 +7,6 @@ class chip_sw_lc_ctrl_transition_vseq extends chip_sw_base_vseq;
 
   `uvm_object_new
 
-  // LC sends two 64-bit msg as input token.
-  localparam uint TokenWidthBit  = kmac_pkg::MsgWidth * 2;
-  localparam uint TokenWidthByte = TokenWidthBit / 8;
-
   rand bit [7:0] lc_exit_token[TokenWidthByte];
   rand bit [7:0] lc_unlock_token[TokenWidthByte];
 
@@ -31,8 +27,8 @@ class chip_sw_lc_ctrl_transition_vseq extends chip_sw_base_vseq;
 
     // Override the test exit token to match SW test's input token.
     cfg.mem_bkdr_util_h[Otp].otp_write_secret0_partition(
-        .unlock_token(get_otp_token(lc_unlock_token)),
-        .exit_token(get_otp_token(lc_exit_token)));
+        .unlock_token(dec_otp_token_from_lc_csrs(lc_unlock_token)),
+        .exit_token(dec_otp_token_from_lc_csrs(lc_exit_token)));
   endfunction
 
   virtual task dut_init(string reset_kind = "HARD");
@@ -40,24 +36,8 @@ class chip_sw_lc_ctrl_transition_vseq extends chip_sw_base_vseq;
     backdoor_override_otp();
   endtask
 
-  // This function takes the token value from LC_CTRL token CSRs, then runs through cshake128 to
-  // get a 768-bit XORed token output.
-  // The first 128 bits of the decoded token should match the OTP's secret0 paritition's
-  // descrambled tokens value.
-  virtual function bit [TokenWidthBit-1:0] get_otp_token(
-      bit [7:0] token_in[TokenWidthByte]);
-
-    bit [7:0]                      dpi_digest[kmac_pkg::AppDigestW/8];
-    bit [kmac_pkg::AppDigestW-1:0] digest_bits;
-
-    digestpp_dpi_pkg::c_dpi_cshake128(token_in, "", "LC_CTRL", TokenWidthByte,
-                                      kmac_pkg::AppDigestW/8, dpi_digest);
-
-    digest_bits = {<< byte {dpi_digest}};
-    return (digest_bits[TokenWidthBit-1:0]);
-  endfunction
-
   virtual task body();
+    bit io_ext_clk_done = 1'b0;
     super.body();
 
     for (int trans_i = 1; trans_i <= num_trans; trans_i++) begin
@@ -78,36 +58,9 @@ class chip_sw_lc_ctrl_transition_vseq extends chip_sw_base_vseq;
       // continuously issue LC JTAG read until it returns valid value.
       // In the meantime, TAP selection could happen in between a transaction and might return an
       // error. This error is permitted and can be ignored.
-      cfg.m_jtag_riscv_agent_cfg.allow_errors = 1;
+      wait_lc_ready(.allow_err(1));
 
-      // Wait until LC_CTRL is ready.
-      wait_lc_status(LcReady);
-
-      // Once TAP selection finishes, does not expect any JTAG errors.
-      cfg.m_jtag_riscv_agent_cfg.allow_errors = 0;
-
-      // Use JTAG interface to transit LC_CTRL from TestLock to TestUnlock state.
-      `uvm_info(`gfn, "Start LC transition request to TestUnlock state", UVM_LOW)
-      jtag_riscv_agent_pkg::jtag_write_csr(ral.lc_ctrl.claim_transition_if.get_offset(),
-                                           p_sequencer.jtag_sequencer_h,
-                                           prim_mubi_pkg::MuBi8True);
-      begin
-        bit [TL_DW-1:0] unlock_token_csr_vals[4] = {<< 32 {{<< 8 {lc_unlock_token}}}};
-        foreach (unlock_token_csr_vals[index]) begin
-          jtag_riscv_agent_pkg::jtag_write_csr(ral.lc_ctrl.transition_token[index].get_offset(),
-                                               p_sequencer.jtag_sequencer_h,
-                                               unlock_token_csr_vals[index]);
-        end
-      end
-      jtag_riscv_agent_pkg::jtag_write_csr(ral.lc_ctrl.transition_target.get_offset(),
-                                           p_sequencer.jtag_sequencer_h,
-                                           {DecLcStateNumRep{DecLcStTestUnlocked2}});
-      jtag_riscv_agent_pkg::jtag_write_csr(ral.lc_ctrl.transition_cmd.get_offset(),
-                                           p_sequencer.jtag_sequencer_h,
-                                           1);
-      `uvm_info(`gfn, "Sent LC transition request", UVM_LOW)
-
-      wait_lc_status(LcTransitionSuccessful);
+      jtag_lc_state_transition(DecLcStTestLocked1, DecLcStTestUnlocked2, {<<8{lc_unlock_token}});
 
       // LC state transition requires a chip reset.
       apply_reset();
@@ -115,40 +68,29 @@ class chip_sw_lc_ctrl_transition_vseq extends chip_sw_base_vseq;
       // Wait for SW to finish power on set up.
       wait (cfg.sw_logger_vif.printed_log == "Start LC_CTRL transition test.");
 
+      // Detect windows when the AST selects ext_clk to drive the io_clk, to verify the external
+      // clock, and not the io oscillator, is actually used for these lc_ctrl transitions.
+      fork
+        begin
+          cfg.ast_ext_clk_vif.detect_io_active_window();
+          io_ext_clk_done = 1'b1;
+        end
+      join_none
+
       // Wait for LC_CTRL state trasition finish from TLUL interface.
       wait_lc_status(LcTransitionSuccessful);
 
       // LC_CTRL state transition requires a chip reset.
       apply_reset();
+      `uvm_info(`gfn, "Second apply_reset done", UVM_MEDIUM)
+
+      `DV_CHECK(io_ext_clk_done, "Io osc blocker should be done");
+      io_ext_clk_done = 1'b0;
 
       // Wait for SW test finishes with a pass/fail status.
       wait (cfg.sw_test_status_vif.sw_test_status inside {SwTestStatusPassed,
                                                           SwTestStatusFailed});
       `uvm_info(`gfn, $sformatf("Sequence %0d/%0d finished!", trans_i, num_trans), UVM_LOW)
-    end
-  endtask
-
-  virtual task wait_lc_status(lc_ctrl_status_e expect_status, int max_attemp = 5000);
-    int i;
-    for (i = 0; i < max_attemp; i++) begin
-      bit [TL_DW-1:0]  status_val;
-      lc_ctrl_status_e dummy;
-      cfg.clk_rst_vif.wait_clks($urandom_range(0, 10));
-      jtag_riscv_agent_pkg::jtag_read_csr(ral.lc_ctrl.status.get_offset(),
-                                          p_sequencer.jtag_sequencer_h,
-                                          status_val);
-
-      // Ensure that none of the other status bits are set.
-      `DV_CHECK_EQ(status_val >> dummy.num(), 0,
-                   $sformatf("Unexpected status error %0h", status_val))
-      if (status_val[expect_status]) begin
-        `uvm_info(`gfn, $sformatf("LC status %0s.", expect_status.name), UVM_LOW)
-        break;
-      end
-    end
-
-    if (i > max_attemp) begin
-      `uvm_fatal(`gfn, $sformatf("max attempt reached to get lc status %0s!", expect_status.name))
     end
   endtask
 

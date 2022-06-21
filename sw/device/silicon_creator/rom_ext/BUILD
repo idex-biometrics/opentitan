@@ -2,6 +2,7 @@
 # Licensed under the Apache License, Version 2.0, see LICENSE for details.
 # SPDX-License-Identifier: Apache-2.0
 
+load("//rules:manifest.bzl", "CONST", "manifest")
 load("//rules:opentitan.bzl", "opentitan_flash_binary")
 load("//rules:linker.bzl", "ld_library")
 load("//rules:cross_platform.bzl", "dual_cc_device_library_of", "dual_cc_library", "dual_inputs")
@@ -92,6 +93,15 @@ ld_library(
     ],
 )
 
+ld_library(
+    name = "ld_virtual_addr",
+    script = "rom_ext_virtual_addr.ld",
+    deps = [
+        ":ld_common",
+        "//hw/top_earlgrey/sw/autogen:top_earlgrey_memory",
+    ],
+)
+
 cc_library(
     name = "rom_ext",
     srcs = ["rom_ext.c"],
@@ -109,6 +119,7 @@ cc_library(
         "//sw/device/silicon_creator/lib:rom_print",
         "//sw/device/silicon_creator/lib:shutdown",
         "//sw/device/silicon_creator/lib/base:sec_mmio",
+        "//sw/device/silicon_creator/lib/base:static_critical_boot_measurements",
         "//sw/device/silicon_creator/lib/base:static_critical_sec_mmio",
         "//sw/device/silicon_creator/lib/drivers:flash_ctrl",
         "//sw/device/silicon_creator/lib/drivers:hmac",
@@ -121,9 +132,23 @@ cc_library(
     ],
 )
 
+manifest(
+    name = "manifest_standard",
+    address_translation = CONST.FALSE,
+    identifier = CONST.ROM_EXT,
+)
+
+manifest(
+    name = "manifest_virtual",
+    address_translation = CONST.TRUE,
+    identifier = CONST.ROM_EXT,
+)
+
 opentitan_flash_binary(
     name = "slot_a",
     srcs = ["rom_ext_start.S"],
+    manifest = ":manifest_standard",
+    output_signed = True,
     deps = [
         ":ld_slot_a",
         ":rom_ext",
@@ -135,8 +160,23 @@ opentitan_flash_binary(
 opentitan_flash_binary(
     name = "slot_b",
     srcs = ["rom_ext_start.S"],
+    manifest = ":manifest_standard",
+    output_signed = True,
     deps = [
         ":ld_slot_b",
+        ":rom_ext",
+        "//sw/device/lib/crt",
+        "//sw/device/silicon_creator/lib:manifest_def",
+    ],
+)
+
+opentitan_flash_binary(
+    name = "virtual_addr",
+    srcs = ["rom_ext_start.S"],
+    manifest = ":manifest_virtual",
+    output_signed = True,
+    deps = [
+        ":ld_virtual_addr",
         ":rom_ext",
         "//sw/device/lib/crt",
         "//sw/device/silicon_creator/lib:manifest_def",

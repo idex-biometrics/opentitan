@@ -140,7 +140,7 @@ class otbn_scoreboard extends cip_base_scoreboard #(
     operational_state_e  state;
     otbn_exp_read_data_t exp_read_data = '{upd: 1'b0, chk: 'x, val: 'x};
 
-    state = get_operational_state(model_status);
+    state = get_operational_state(status_e'(model_status));
 
     aligned_addr = ral.get_word_aligned_addr(item.a_addr);
     masked_addr  = aligned_addr & ral.get_addr_mask();
@@ -180,9 +180,9 @@ class otbn_scoreboard extends cip_base_scoreboard #(
           // We start any operation when we see a write of the related command and we are currently
           // in the IDLE operational state. See the comment above pending_start_tl_trans to see how
           // this tracking works.
-          bit cmd_operation = item.a_data inside {otbn_pkg::CmdSecWipeImem,
-                                                  otbn_pkg::CmdSecWipeDmem,
-                                                  otbn_pkg::CmdExecute};
+          bit cmd_operation = item.a_data[7:0] inside {otbn_pkg::CmdSecWipeImem,
+                                                       otbn_pkg::CmdSecWipeDmem,
+                                                       otbn_pkg::CmdExecute};
           if (cmd_operation && (model_status == otbn_pkg::StatusIdle)) begin
             // Set a flag: we're expecting the model to start on the next posedge. Also, spawn off a
             // checking thread that will make sure the flag has been cleared again by the following
@@ -293,7 +293,7 @@ class otbn_scoreboard extends cip_base_scoreboard #(
     // Track coverage for read accesses through the bus to external CSRs.
     if (cfg.en_cov) begin
       cov.on_ext_csr_access(csr, otbn_env_pkg::AccessSoftwareRead, item.d_data,
-                            get_operational_state(model_status));
+                            get_operational_state(status_e'(model_status)));
     end
 
     // Look up the expected read data for item and then clear it (to get a quick error if something
@@ -358,7 +358,7 @@ class otbn_scoreboard extends cip_base_scoreboard #(
               UVM_HIGH);
 
     if (cfg.en_cov) begin
-      cov.on_mem_write(mem, offset, item.a_data, get_operational_state(model_status));
+      cov.on_mem_write(mem, offset, item.a_data, get_operational_state(status_e'(model_status)));
     end
 
     // Predict the resulting value of LOAD_CHECKSUM
@@ -401,7 +401,9 @@ class otbn_scoreboard extends cip_base_scoreboard #(
 
           model_status = item.status;
 
-          if (cfg.en_cov) cov.on_state_change(model_status);
+          if (cfg.en_cov) begin
+            cov.on_state_change(get_operational_state(status_e'(model_status)));
+          end
         end
 
         OtbnModelInsn: begin
@@ -614,5 +616,22 @@ class otbn_scoreboard extends cip_base_scoreboard #(
       join_none
     end
   endfunction
+
+  virtual function void mem_compare(string ral_name, uvm_reg_addr_t addr, tl_seq_item item);
+    // We can only compare the contents inside memories when the OTBN is not operating
+    if (model_status == otbn_pkg::StatusIdle) begin
+      super.mem_compare(ral_name, addr, item);
+    // Otherwise the contents will read out as zeros so compare expected memory with zero.
+    end else begin
+      `DV_CHECK_EQ(item.d_data, '0, "Memory read out nonzero value while OTBN is not IDLE")
+    end
+  endfunction
+
+  virtual task process_mem_read(tl_seq_item item, string ral_name);
+    super.process_mem_read(item, ral_name);
+    if (model_status == 'b1 && item.d_data != 0) begin
+      `uvm_error(`gfn, "read data is non zero when memory is accessed while otbn is busy")
+    end
+  endtask
 
 endclass

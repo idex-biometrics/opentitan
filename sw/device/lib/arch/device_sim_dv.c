@@ -15,7 +15,11 @@ const device_type_t kDeviceType = kDeviceSimDV;
 // TODO: DV testbench completely randomizes these. Need to add code to
 // retrieve these from a preloaded memory location set by the testbench.
 
-const uint64_t kClockFreqCpuHz = 100 * 1000 * 1000;  // 100MHz
+const uint64_t kClockFreqCpuMhz = 100;
+
+const uint64_t kClockFreqCpuHz = kClockFreqCpuMhz * 1000 * 1000;
+
+uint64_t to_cpu_cycles(uint64_t usec) { return usec * kClockFreqCpuMhz; }
 
 const uint64_t kClockFreqPeripheralHz = 24 * 1000 * 1000;  // 24MHz
 
@@ -30,6 +34,9 @@ const uint32_t kUartNCOValue =
 
 const uint32_t kUartTxFifoCpuCycles =
     CALCULATE_UART_TX_FIFO_CPU_CYCLES(kUartBaudrate, kClockFreqCpuHz);
+
+const uint32_t kAstCheckPollCpuCycles =
+    CALCULATE_AST_CHECK_POLL_CPU_CYCLES(kClockFreqCpuHz);
 
 // Defined in `hw/top_earlgrey/dv/env/chip_env_pkg.sv`
 const uintptr_t kDeviceTestStatusAddress = 0x411f0080;
